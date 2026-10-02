@@ -130,6 +130,52 @@ def test_ciphertext_plaintext_multiplication():
     assert all(abs(e - d) < 0.05 for e, d in zip(expected, dec, strict=False))
 
 
+def test_encode_at_a_ring_and_scale():
+    # Plaintexts for a ciphertext further down the chain are encoded in that
+    # ciphertext's ring, at whatever scale the computation calls for.
+    scheme = CKKS_Scheme(
+        Ring(N, 300, split_degree=1), scaling_factor=2**40, special_primes=0
+    )
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    v, w = rand_values(N // 2), rand_values(N // 2)
+    ring = scheme.rings[1]
+    pt = scheme.encode(w, ring=ring, scale=2**30)
+    assert pt.ring == ring and pt.rns_mask == ring.mask
+    assert all(
+        abs(a - b) < 1e-6
+        for a, b in zip(w, scheme.decode(pt, scaling_factor=2**30), strict=True)
+    )
+    ct = scheme.sample(scheme.encode(v, ring=ring), key, lvl=1)
+    assert isinstance(ct, CKKS_Ciphertext)
+    prod = scheme.multiply_plain(ct, pt, scale=2**30)
+    assert prod.lvl == 1 and prod.delta == 2**40 * 2**30
+    dec = scheme.decode(scheme.decrypt(prod, key), scaling_factor=prod.delta)
+    assert all(abs(a * b - d) < 0.05 for a, b, d in zip(v, w, dec, strict=True))
+
+
+def test_plaintext_products_summed_before_one_rescale():
+    scheme = CKKS_Scheme(
+        Ring(N, 300, split_degree=1), scaling_factor=2**49, special_primes=0
+    )
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    v, w, u = (rand_values(N // 2) for _ in range(3))
+    ct = scheme.encrypt(scheme.encode(v), key)
+
+    # An unscaled plaintext leaves the ciphertext's scale where it was.
+    one = scheme.multiply_plain(ct, scheme.encode([1] * (N // 2), scale=1), scale=1)
+    assert one.delta == ct.delta and one.lvl == ct.lvl
+    dec = scheme.decode(scheme.decrypt(one, key), scaling_factor=one.delta)
+    assert all(abs(a - d) < 0.05 for a, d in zip(v, dec, strict=True))
+
+    acc = scheme.multiply_plain(ct, scheme.encode(w))
+    acc += scheme.multiply_plain(ct, scheme.encode(u))
+    acc = scheme.rescale(acc)
+    assert acc.lvl == 1
+    dec = scheme.decode(scheme.decrypt(acc, key), scaling_factor=acc.delta)
+    expected = [a * (b + c) for a, b, c in zip(v, w, u, strict=True)]
+    assert all(abs(e - d) < 0.05 for e, d in zip(expected, dec, strict=True))
+
+
 def test_rational_rescale_shared_primes():
     # Level 0 = primes {0,1,2}, level 1 = primes {0,1,3}: level 1 is NOT a
     # quotient of level 0 (they diverge in the third prime), so a plain rescale

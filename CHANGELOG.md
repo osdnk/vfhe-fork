@@ -100,6 +100,22 @@ versions may contain breaking changes.
   neither answers for the other. Reuse is the library's to offer because that
   name is: a caller naming the module for itself either rebuilds every time or
   loads a module built for other flags or another ABI.
+- Add `ring=` and `scale=` to `CKKS_Scheme.encode`: the ring the plaintext
+  lives in (default: level 0's) and the factor the values are scaled by
+  (default: `scaling_factor`), e.g. for a ciphertext further down the chain.
+- Add `CKKS_Scheme.multiply_plain(ciphertext, plaintext, scale)`: a plaintext
+  product without the rescale, with `delta` multiplied by the plaintext's
+  `scale` (default: `scaling_factor`; 1 for an unscaled plaintext), so
+  several products can be summed before one rescale. `ciphertext *
+  plaintext` is this followed by `rescale`.
+- Add hoisted automorphisms: `MLWE_Scheme.automorphisms(c, gens, ksks)`
+  applies several automorphisms to one ciphertext, decomposing it against the
+  gadget once and reusing the digits for every key switch (each automorphism
+  permutes them instead of recomputing them). Both gadgets are supported. 16
+  rotations at N=2^14 over nine primes: 1.4-1.6x faster on avx512ifma, 2.4x
+  on portable. Natively, `mlwe_hoist` / `mlwe_automorphism_RNSc_GHS_hoisted`,
+  and the automorphism on the NTT representation of a fully split ring,
+  `polynomial_RNS_automorphism_index` / `polynomial_RNS_permute`.
 
 ### Changed
 
@@ -166,6 +182,28 @@ versions may contain breaking changes.
   [`USAGE.md`](docs/USAGE.md) covers the allocator settings that go with it.
 
 ### Fixed
+
+- Fix `ComplexRing(N)` crashing for `N < 8` on avx512ifma, and
+  `complex_poly_scale_double` scaling nothing below `N = 4` there: the
+  vectorized transforms need a full vector of values, and their table loader
+  under-flowed for shorter lengths. Those lengths now run the scalar
+  transforms, which every engine compiles.
+- Fix `mlwe_round_division` leaving the sample on its old ring: the
+  components were divided into the destination ring, but `->ring` still named
+  the source, so native code that allocates or key-switches from a sample
+  after a rescale worked in the wrong ring.
+- Fix `MLWE.new_like()` (behind `copy`, `+`, `-` and plaintext products)
+  allocating at the level's defaults rather than like its input: a sample over
+  a special ring came back over `rings[-1]`, and an unrelinearized product
+  lost every component past the scheme's rank. With neither `lvl` nor `ring`
+  given, the result now has the input's ring, rank and `is_extended`.
+- Fix the native RNS ring handles stopping being shared after 256 distinct
+  rings: past that, every lookup allocated a new handle that was never freed
+  (one per sample allocated), and two handles for one ring no longer compared
+  equal. The table now grows, under a lock.
+- `ComplexPolynomial` assignment, `from_array` and `*=` accept any
+  `numbers.Complex` / `numbers.Real` (e.g. a subclass of `complex`, or a
+  `Fraction`) instead of only the exact builtin types.
 
 - `FieldVector.view` of a view started at the parent's buffers rather than at
   the view: the nested view's planes skipped the outer offset, so it read and

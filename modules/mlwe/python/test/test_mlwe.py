@@ -14,6 +14,7 @@ from typing import cast
 import pytest
 from vfhe.arith import Polynomial, Ring
 from vfhe.crypto import entropy
+from vfhe.engine import ffi
 from vfhe.mlwe import LWE, LWE_Key, MGSW_Scheme, MLWE_Scheme, MLWE_Set
 
 N = 256
@@ -491,6 +492,19 @@ def test_keyswitch_radix_at_a_level(ghs):
     )
     c_out = scheme.keyswitch(c1, ksk)
     assert scheme.phase(c_out, key2).round_division(Rp) == m0
+
+
+def test_round_division_moves_the_native_ring(ghs):
+    # Native code that allocates, rescales or key-switches from a sample takes
+    # the ring from the sample itself, so it must name the ring the components
+    # were divided into.
+    _Rq, Rp, scheme = ghs
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    m0 = Rp.random_element()
+    c = enc(scheme, Rp, m0, key).round_division(lvl=1)
+    assert ffi.cast("MLWE", c.obj).ring == scheme.rings[1].arith_ring
+    assert scheme.phase(c, key).round_division(Rp) == m0
+
 
 def test_derived_samples_keep_the_shape(ghs):
     # copy / add / sub allocate their result like their input: a sample over a

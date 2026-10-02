@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import cast
 
 from vfhe.arith import (
     ComplexPolynomial,
@@ -40,8 +41,24 @@ class CKKS_Scheme(MLWE_Scheme):
         self.scaling_factor = scaling_factor
         self.complex_ring = ComplexRing(self.ring.N // 2, True)
 
-    def encode(self, values: list[complex | float]) -> RNSPolynomial:
-        """Encodes a list of complex/float values into a polynomial in the ciphertext ring."""
+    def encode(
+        self,
+        values: list[complex | float],
+        *,
+        ring: RNSRing | None = None,
+        scale: float | None = None,
+    ) -> RNSPolynomial:
+        """Encodes a list of complex/float values into a polynomial.
+
+        The polynomial lives in ``ring`` (default: level 0's ring), e.g. the
+        ring of a ciphertext further down the chain or a special ring, and the
+        values are multiplied by ``scale`` (default: ``scaling_factor``).
+        """
+        ring = self.ring if ring is None else ring
+        if ring.N != self.ring.N:
+            raise ValueError(
+                f"Expected a ring of dimension {self.ring.N}, got {ring.N}"
+            )
         if not (len(values) == self.ring.N // 2):
             raise ValueError(f"Expected {self.ring.N // 2} values, got {len(values)}")
         # Create a ComplexPolynomial and populate it with values
@@ -50,13 +67,12 @@ class CKKS_Scheme(MLWE_Scheme):
         # Transform to coefficient domain using IFFT
         c_poly.IFFT()
         # Scale by the scaling factor
-        c_poly *= self.scaling_factor
+        c_poly *= self.scaling_factor if scale is None else scale
         # Round and convert to RNS
-        poly = c_poly.round_to_RNS_cpp(self.ring)
+        poly = c_poly.round_to_RNS_cpp(ring)
 
-        # Restrict the RNS mask of the encoded polynomial to match normal primes (excluding special primes)
-        # self.ring (= rings[0]) already excludes special primes, so use its mask directly
-        ffi.cast("RNS_Polynomial", poly.obj).rns_mask = self.ring.mask
+        # Restrict the RNS mask of the encoded polynomial to the primes of `ring`
+        ffi.cast("RNS_Polynomial", poly.obj).rns_mask = ring.mask
 
         return poly
 
@@ -129,6 +145,25 @@ class CKKS_Scheme(MLWE_Scheme):
         k_mod = k % (N // 2)
         gen = pow(5, k_mod, 2 * N)
         return self.gen_ksk_automorphism(key, key, gen)
+
+    def multiply_plain(
+        self,
+        ciphertext: CKKS_Ciphertext,
+        plaintext: RNSPolynomial,
+        scale: float | None = None,
+    ) -> CKKS_Ciphertext:
+        """Multiplies by a plaintext, without rescaling.
+
+        ``scale`` is the factor the plaintext was encoded at (default:
+        ``scaling_factor``; 1 for an unscaled one, such as a monomial). The
+        product's ``delta`` is the ciphertext's times ``scale``, so products
+        can be summed before a single :meth:`rescale`.
+        """
+        prod = cast("CKKS_Ciphertext", MLWE.__mul__(ciphertext, plaintext))
+        prod.delta = ciphertext.delta * (
+            self.scaling_factor if scale is None else scale
+        )
+        return prod
 
     def rescale(self, ciphertext: CKKS_Ciphertext) -> CKKS_Ciphertext:
         """Rescale down one level: move the next ring in the chain of rings.
@@ -232,12 +267,7 @@ class CKKS_Ciphertext(MLWE):
 
             return self.scheme.rescale(prod)
         elif isinstance(other, RNSPolynomial):
-            base_prod = super().__mul__(other)
-            prod = CKKS_Ciphertext(self.scheme, lvl=base_prod.lvl)
-            prod.copy_from(base_prod)
-            prod.delta = self.delta * self.scheme.scaling_factor
-
-            return self.scheme.rescale(prod)
+            return self.scheme.rescale(self.scheme.multiply_plain(self, other))
         else:
             base_prod = super().__mul__(other)
             prod = CKKS_Ciphertext(self.scheme, lvl=base_prod.lvl)

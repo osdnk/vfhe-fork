@@ -582,4 +582,5 @@ void mlwe_round_division(RNSc_MLWE out, ArithRing to)
         arith_round_division(out->ring, &out->a[j], to);
     }
     arith_round_division(out->ring, &out->b, to);
+    out->ring = to;
 }

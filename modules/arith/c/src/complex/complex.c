@@ -51,7 +51,116 @@ void complex_poly_round_to_RNS(RNS_Polynomial out, double *in, uint64_t N)
     free(tmp);
 }
 
+// The scalar transforms, compiled into every engine: they are the whole
+// implementation without AVX-512, and the vectorized one's below its minimum
+// length. Their tables are the roots as given, real and imaginary halves.
+
+// c = a*b
+#define COMPLEX_MULT_SCALAR(c_real, c_imag, a_real, a_imag, b_real, b_imag)                        \
+    {                                                                                              \
+        (c_imag) = ((a_real) * (b_imag) + (b_real) * (a_imag));                                    \
+        (c_real) = ((a_real) * (b_real) - (a_imag) * (b_imag));                                    \
+    }
+
+static void complex_poly_scale_double_scalar(double *v, double scale, uint64_t N)
+{
+    for (size_t i = 0; i < 2 * N; i++)
+        v[i] *= scale;
+}
+
+static double **load_rous_scalar(double *rous_real, double *rous_imag, uint64_t size)
+{
+    double **rous = (double **)safe_malloc(2 * sizeof(double *));
+    rous[0] = (double *)safe_aligned_malloc(sizeof(double) * size);
+    rous[1] = (double *)safe_aligned_malloc(sizeof(double) * size);
+    memcpy(rous[0], rous_real, size * sizeof(double));
+    memcpy(rous[1], rous_imag, size * sizeof(double));
+    return rous;
+}
+
+static void CT_NR_scalar(double *x, double **ws, uint64_t n)
+{
+    uint64_t t = n, m = 1;
+    double V_real, V_imag;
+    double *real = x, *imag = &x[n];
+    while (m < n)
+    {
+        t >>= 1;
+        for (size_t i = 0; i < m; i++)
+        {
+            const uint64_t j1 = 2 * i * t;
+            const uint64_t j2 = j1 + t;
+            const double w_real = ws[0][m + i], w_imag = ws[1][m + i];
+            for (size_t j = j1; j < j2; j++)
+            {
+                COMPLEX_MULT_SCALAR(V_real, V_imag, real[j + t], imag[j + t], w_real, w_imag);
+                real[j + t] = real[j] - V_real;
+                imag[j + t] = imag[j] - V_imag;
+                real[j] += V_real;
+                imag[j] += V_imag;
+            }
+        }
+        m <<= 1;
+    }
+}
+
+static void GS_RN_scalar(double *x, double **ws, uint64_t n)
+{
+    uint64_t t = 1, m = n;
+    double V_real, V_imag;
+    double *real = x, *imag = &x[n];
+    while (m > 1)
+    {
+        uint64_t j1 = 0, h = m >> 1;
+        for (size_t i = 0; i < h; i++)
+        {
+            uint64_t j2 = j1 + t;
+            const double w_real = ws[0][h + i], w_imag = ws[1][h + i];
+            for (size_t j = j1; j < j2; j++)
+            {
+                V_real = real[j] - real[j + t];
+                V_imag = imag[j] - imag[j + t];
+                real[j] += real[j + t];
+                imag[j] += imag[j + t];
+                COMPLEX_MULT_SCALAR(real[j + t], imag[j + t], V_real, V_imag, w_real, w_imag);
+            }
+            j1 += 2 * t;
+        }
+        t <<= 1;
+        m >>= 1;
+    }
+}
+
+#if !VFHE_HAVE_AVX512F
+
+void complex_poly_scale_double(double *v, double scale, uint64_t N)
+{
+    complex_poly_scale_double_scalar(v, scale, N);
+}
+
+double **load_rous_CT(double *rous_real, double *rous_imag, uint64_t size)
+{
+    return load_rous_scalar(rous_real, rous_imag, size);
+}
+
+double **load_rous_GS(double *rous_real, double *rous_imag, uint64_t size)
+{
+    return load_rous_scalar(rous_real, rous_imag, size);
+}
+
+void CT_NR(double *x, double **ws, uint64_t n) { CT_NR_scalar(x, ws, n); }
+
+void GS_RN(double *x, double **ws, uint64_t n) { GS_RN_scalar(x, ws, n); }
+
+#endif
+
 #if VFHE_HAVE_AVX512F
+// The transform length below which the vectorized code cannot run: a vector
+// holds 8 real or 8 imaginary parts, its last three stages permute within one,
+// and its tables have log2(size) - 3 broadcast levels. Shorter transforms, and
+// their tables (whose `size` is twice the length), take the scalar bodies.
+#define COMPLEX_MIN_VECTOR_LEN 8
+
 // c = a*b
 #define COMPLEX_MULT(c_real, c_imag, a_real, a_imag, b_real, b_imag)                               \
     {                                                                                              \
@@ -63,6 +172,11 @@ void complex_poly_round_to_RNS(RNS_Polynomial out, double *in, uint64_t N)
 
 void complex_poly_scale_double(double *v, double scale, uint64_t N)
 {
+    if (N < COMPLEX_MIN_VECTOR_LEN)
+    {
+        complex_poly_scale_double_scalar(v, scale, N);
+        return;
+    }
     const __m512d scalev = _mm512_set1_pd(scale);
     __m512d *vv = (__m512d *)(v);
     for (size_t i = 0; i < (N >> 2); i++)
@@ -73,6 +187,10 @@ void complex_poly_scale_double(double *v, double scale, uint64_t N)
 
 double **load_rous_CT(double *rous_real, double *rous_imag, uint64_t size)
 {
+    if (size < 2 * COMPLEX_MIN_VECTOR_LEN)
+    {
+        return load_rous_scalar(rous_real, rous_imag, size);
+    }
     const uint64_t logn = (uint64_t)log2(size);
     double **rous = (double **)safe_malloc(logn * sizeof(double *));
     size_t level;
@@ -118,6 +236,10 @@ double **load_rous_CT(double *rous_real, double *rous_imag, uint64_t size)
 
 double **load_rous_GS(double *rous_real, double *rous_imag, uint64_t size)
 {
+    if (size < 2 * COMPLEX_MIN_VECTOR_LEN)
+    {
+        return load_rous_scalar(rous_real, rous_imag, size);
+    }
     const uint64_t logn = (uint64_t)log2(size), n = size;
     double **rous = (double **)safe_malloc(logn * sizeof(double *));
     size_t level = 0;
@@ -176,6 +298,11 @@ double **load_rous_GS(double *rous_real, double *rous_imag, uint64_t size)
 
 void CT_NR(double *x, double **ws, uint64_t n)
 {
+    if (n < COMPLEX_MIN_VECTOR_LEN)
+    {
+        CT_NR_scalar(x, ws, n);
+        return;
+    }
     uint64_t t_vec = n >> 3;
     __m512d *real = (__m512d *)x;
     __m512d *imag = &((__m512d *)x)[t_vec];
@@ -265,6 +392,11 @@ void CT_NR(double *x, double **ws, uint64_t n)
 
 void GS_RN(double *x, double **ws, uint64_t n)
 {
+    if (n < COMPLEX_MIN_VECTOR_LEN)
+    {
+        GS_RN_scalar(x, ws, n);
+        return;
+    }
     uint64_t t_vec = n >> 3;
     __m512d *real = (__m512d *)x;
     __m512d *imag = &((__m512d *)x)[t_vec];
@@ -349,94 +481,6 @@ void GS_RN(double *x, double **ws, uint64_t n)
                 COMPLEX_MULT(real[j + t], imag[j + t], V_real, V_imag, w_real, w_imag);
             }
         }
-    }
-}
-
-#else
-
-// c = a*b
-#define COMPLEX_MULT_SCALAR(c_real, c_imag, a_real, a_imag, b_real, b_imag)                        \
-    {                                                                                              \
-        (c_imag) = ((a_real) * (b_imag) + (b_real) * (a_imag));                                    \
-        (c_real) = ((a_real) * (b_real) - (a_imag) * (b_imag));                                    \
-    }
-
-void complex_poly_scale_double(double *v, double scale, uint64_t N)
-{
-    for (size_t i = 0; i < 2 * N; i++)
-        v[i] *= scale;
-}
-
-double **load_rous_CT(double *rous_real, double *rous_imag, uint64_t size)
-{
-    double **rous = (double **)safe_malloc(2 * sizeof(double *));
-    rous[0] = (double *)safe_aligned_malloc(sizeof(double) * size);
-    rous[1] = (double *)safe_aligned_malloc(sizeof(double) * size);
-    memcpy(rous[0], rous_real, size * sizeof(double));
-    memcpy(rous[1], rous_imag, size * sizeof(double));
-    return rous;
-}
-
-double **load_rous_GS(double *rous_real, double *rous_imag, uint64_t size)
-{
-    double **rous = (double **)safe_malloc(2 * sizeof(double *));
-    rous[0] = (double *)safe_aligned_malloc(sizeof(double) * size);
-    rous[1] = (double *)safe_aligned_malloc(sizeof(double) * size);
-    memcpy(rous[0], rous_real, size * sizeof(double));
-    memcpy(rous[1], rous_imag, size * sizeof(double));
-    return rous;
-}
-
-void CT_NR(double *x, double **ws, uint64_t n)
-{
-    uint64_t t = n, m = 1;
-    double V_real, V_imag;
-    double *real = x, *imag = &x[n];
-    while (m < n)
-    {
-        t >>= 1;
-        for (size_t i = 0; i < m; i++)
-        {
-            const uint64_t j1 = 2 * i * t;
-            const uint64_t j2 = j1 + t;
-            const double w_real = ws[0][m + i], w_imag = ws[1][m + i];
-            for (size_t j = j1; j < j2; j++)
-            {
-                COMPLEX_MULT_SCALAR(V_real, V_imag, real[j + t], imag[j + t], w_real, w_imag);
-                real[j + t] = real[j] - V_real;
-                imag[j + t] = imag[j] - V_imag;
-                real[j] += V_real;
-                imag[j] += V_imag;
-            }
-        }
-        m <<= 1;
-    }
-}
-
-void GS_RN(double *x, double **ws, uint64_t n)
-{
-    uint64_t t = 1, m = n;
-    double V_real, V_imag;
-    double *real = x, *imag = &x[n];
-    while (m > 1)
-    {
-        uint64_t j1 = 0, h = m >> 1;
-        for (size_t i = 0; i < h; i++)
-        {
-            uint64_t j2 = j1 + t;
-            const double w_real = ws[0][h + i], w_imag = ws[1][h + i];
-            for (size_t j = j1; j < j2; j++)
-            {
-                V_real = real[j] - real[j + t];
-                V_imag = imag[j] - imag[j + t];
-                real[j] += real[j + t];
-                imag[j] += imag[j + t];
-                COMPLEX_MULT_SCALAR(real[j + t], imag[j + t], V_real, V_imag, w_real, w_imag);
-            }
-            j1 += 2 * t;
-        }
-        t <<= 1;
-        m >>= 1;
     }
 }
 

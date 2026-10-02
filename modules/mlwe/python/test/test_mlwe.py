@@ -492,6 +492,25 @@ def test_keyswitch_radix_at_a_level(ghs):
     c_out = scheme.keyswitch(c1, ksk)
     assert scheme.phase(c_out, key2).round_division(Rp) == m0
 
+def test_derived_samples_keep_the_shape(ghs):
+    # copy / add / sub allocate their result like their input: a sample over a
+    # special ring keeps its special prime, and an unrelinearized product its
+    # extended rank, instead of falling back to the level's defaults.
+    _Rq, _Rp, scheme = ghs
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    c = scheme.sample(scheme.rings[0].random_element(), key)
+    special = type(c)(scheme, lvl=-1, ring=scheme.special_rings[0])
+    product = scheme.multiply(c, c, None)
+    for x in (special, product):
+        for out in (x.copy(), x + x, x - x):
+            assert out.ring == x.ring
+            assert out.r == x.r
+            assert out.is_extended == x.is_extended
+    copied = product.copy()
+    for i in range(product.r):
+        assert copied.get_a_poly(i) == product.get_a_poly(i)
+    assert copied.get_b_poly() == product.get_b_poly()
+
 
 def test_gen_ksk_rejects_a_radix_larger_than_the_primes(bv):
     _Rq, _Rp, scheme = bv

@@ -783,7 +783,8 @@ void ntt_free_precompute(uint64_t **ws, uint64_t **w_precon, uint64_t n);
     void pmf_vec_ntt_forward(PMFVector a, PMFNTTPlan plan);
     void pmf_vec_ntt_inverse(PMFVector a, PMFNTTPlan plan);
 
-    // complex polynomial
+    // complex polynomial. A polynomial is n doubles of real parts followed by n
+    // of imaginary ones, and a table is loaded from size = 2n roots.
     double **load_rous_CT(double *rous_real, double *rous_imag, uint64_t size);
     void CT_NR(double *x, double **ws, uint64_t n);
     double **load_rous_GS(double *rous_real, double *rous_imag, uint64_t size);

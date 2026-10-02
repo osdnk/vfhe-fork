@@ -9,6 +9,7 @@ slot inversion, the CKKS complex FFT roundtrip, and the multiprecision bridge.
 
 import math
 import random
+from fractions import Fraction
 
 import pytest
 from vfhe.arith import (
@@ -19,6 +20,7 @@ from vfhe.arith import (
     Ring,
     repr,
 )
+from vfhe.engine import ffi
 
 N = 16
 rng = random.Random(0xC0FFEE)  # noqa: S311 - test data, not a key
@@ -158,6 +160,90 @@ def test_complex_fft_roundtrip():
     cp.FFT()
     out = list(cp)
     assert all(abs(out[i] - slots[i]) < 1e-6 for i in range(cN))
+
+
+def _brv(x, bits):
+    return int(bin(x)[2:].rjust(bits, "0")[::-1], 2) if bits else 0
+
+
+def _complex_fft_oracle(v, n, inverse):
+    """The scalar CT_NR (forward) / GS_RN (inverse) transforms, in Python."""
+    rous = ComplexRing.gen_special_rous_hp(2 * n)
+    ws = [r**-1 for r in rous] if inverse else rous
+    logn = int(math.log2(n))
+    x = list(v)
+    if inverse:
+        x = [x[_brv(i, logn)] for i in range(n)]
+        t, m = 1, n
+        while m > 1:
+            h = m >> 1
+            for i in range(h):
+                for j in range(2 * i * t, 2 * i * t + t):
+                    u, w = x[j], x[j + t]
+                    x[j], x[j + t] = u + w, (u - w) * ws[h + i]
+            t, m = t << 1, h
+        return [c / n for c in x]
+    t, m = n, 1
+    while m < n:
+        t >>= 1
+        for i in range(m):
+            for j in range(2 * i * t, 2 * i * t + t):
+                u, w = x[j], x[j + t] * ws[m + i]
+                x[j], x[j + t] = u + w, u - w
+        m <<= 1
+    return [x[_brv(i, logn)] for i in range(n)]
+
+
+@pytest.mark.parametrize("cN", [1, 2, 4, 8, 16, 32])
+def test_complex_fft_matches_oracle(cN):
+    # Below 8 values the vectorized transform cannot run and its table
+    # loader cannot be built, so this length range crosses that cutover.
+    cring = ComplexRing(cN)
+    slots = [complex(rng.uniform(-5, 5), rng.uniform(-5, 5)) for _ in range(cN)]
+    cp = ComplexPolynomial(cring).from_array(slots)
+    cp.IFFT()
+    coeffs = list(cp)
+    expected = _complex_fft_oracle(slots, cN, inverse=True)
+    assert all(abs(coeffs[i] - expected[i]) < 1e-9 for i in range(cN))
+    cp *= 3.0
+    cp.FFT()
+    out = list(cp)
+    expected = _complex_fft_oracle([3.0 * c for c in coeffs], cN, inverse=False)
+    assert all(abs(out[i] - expected[i]) < 1e-9 for i in range(cN))
+    assert all(abs(out[i] - 3.0 * slots[i]) < 1e-9 for i in range(cN))
+
+
+def test_complex_polynomial_accepts_any_number():
+    # Number types beyond the builtins: a subclass of complex (as array
+    # libraries' complex scalars are) and a Real that is not a float.
+    class Sub(complex):
+        pass
+
+    cring = ComplexRing(8)
+    cp = ComplexPolynomial(cring).from_array([Fraction(1, 2), Sub(1, 2), 3, -2.5])
+    cp[4] = Sub(0, -1)
+    cp *= Fraction(2)
+    assert list(cp)[:5] == [1, complex(2, 4), 6, -5, complex(0, -2)]
+    with pytest.raises(NotImplementedError):
+        cp[0] = "1"  # type: ignore[assignment]
+    with pytest.raises(NotImplementedError):
+        cp.from_array(["1"])  # type: ignore[list-item]
+
+
+def test_ring_handles_stay_interned_past_hundreds_of_rings():
+    # Native structures compare rings by handle, so one ring must keep one
+    # handle however many distinct rings the process has used.
+    Rq = Ring(16, prime_size=[30] * 9, split_degree=1)
+    rings = []
+    for subset in range(1, 1 << Rq.ell):
+        mask = 0
+        for i, idx in enumerate(Rq.prime_indices):
+            if subset >> i & 1:
+                mask |= 1 << idx
+        rings.append(Rq.quotient_ring(mask=mask))
+    handles = [r.arith_ring for r in rings]
+    assert len({int(ffi.cast("uintptr_t", h)) for h in handles}) == len(rings)
+    assert all(r.arith_ring == h for r, h in zip(rings, handles, strict=True))
 
 
 def test_multiprecision_scalar_ops():

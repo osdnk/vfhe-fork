@@ -162,6 +162,34 @@ def test_complex_fft_roundtrip():
     assert all(abs(out[i] - slots[i]) < 1e-6 for i in range(cN))
 
 
+@pytest.mark.parametrize("n", [8, 64, 1024])
+@pytest.mark.parametrize(
+    "gen_of", [lambda _n: 3, lambda _n: 5, lambda n: 25 % (2 * n), lambda n: 2 * n - 1]
+)
+def test_ntt_domain_automorphism_matches_the_coefficient_one(n, gen_of):
+    # Narrow and wide primes, and a ring that does not start at base index 0,
+    # across the vectorized transform's minimum length.
+    Rq = Ring(n, prime_size=[28, 50, 30, 45, 60], split_degree=1)
+    mask = 0
+    for idx in Rq.prime_indices[1:]:
+        mask |= 1 << idx
+    R = Rq.quotient_ring(mask=mask)
+    gen = gen_of(n)
+    a = R.random_element(ntt=False)
+    expected = a.automorphism(gen)
+    expected.to_NTT()
+
+    a.to_NTT()
+    idx = ffi.new("uint32_t[]", n)
+    R.lib.polynomial_RNS_automorphism_index(idx, n, gen)
+    out = Polynomial(R)
+    R.lib.polynomial_RNS_permute(out.obj, a.obj, idx)
+    out.repr = repr.ntt
+    assert out.get_coeff_matrix(repr=repr.ntt) == expected.get_coeff_matrix(
+        repr=repr.ntt
+    )
+
+
 def _brv(x, bits):
     return int(bin(x)[2:].rjust(bits, "0")[::-1], 2) if bits else 0
 

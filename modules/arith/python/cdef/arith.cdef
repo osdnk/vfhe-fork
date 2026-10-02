@@ -77,6 +77,8 @@ void polynomial_RNS_add_integer(void *out, void *in1, uint64_t in2);
 
 // --- automorphism / domain conversion ---
 void polynomial_RNSc_permute(void *out, void *in, uint64_t gen);
+void polynomial_RNS_automorphism_index(uint32_t *idx, uint64_t N, uint64_t gen);
+void polynomial_RNS_permute(void *out, void *in, const uint32_t *idx);
 void polynomial_RNSc_to_RNS(void *out, void *in);
 void polynomial_RNS_to_RNSc(void *out, void *in);
 

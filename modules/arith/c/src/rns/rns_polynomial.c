@@ -1369,6 +1369,52 @@ void polynomial_RNSc_permute(RNSc_Polynomial out, RNSc_Polynomial in, uint64_t g
     free(temp_signed);
 }
 
+// The low `bits` bits of x reversed, for bits <= 32.
+static uint64_t rns_index_bit_reverse(uint64_t x, uint64_t bits)
+{
+    uint32_t v = (uint32_t)x;
+    v = ((v >> 1) & 0x55555555u) | ((v & 0x55555555u) << 1);
+    v = ((v >> 2) & 0x33333333u) | ((v & 0x33333333u) << 2);
+    v = ((v >> 4) & 0x0F0F0F0Fu) | ((v & 0x0F0F0F0Fu) << 4);
+    v = ((v >> 8) & 0x00FF00FFu) | ((v & 0x00FF00FFu) << 8);
+    v = (v >> 16) | (v << 16);
+    return bits ? (uint64_t)(v >> (32 - bits)) : 0;
+}
+
+// Position p of the transform holds P(psi^(2 brv(p) + 1)), and the
+// automorphism sends P(X) to P(X^gen), so position p of the image is the
+// position holding the point raised to `gen`.
+void polynomial_RNS_automorphism_index(uint32_t *idx, uint64_t N, uint64_t gen)
+{
+    assert(gen < 2 * N && (gen & 1));
+    uint64_t log_n = 0;
+    while ((1ULL << log_n) < N)
+        log_n++;
+    const uint64_t mask_2n = 2 * N - 1;
+    for (uint64_t p = 0; p < N; p++)
+    {
+        const uint64_t point = (2 * rns_index_bit_reverse(p, log_n) + 1) * gen & mask_2n;
+        idx[p] = (uint32_t)rns_index_bit_reverse(point >> 1, log_n);
+    }
+}
+
+void polynomial_RNS_permute(RNS_Polynomial out, RNS_Polynomial in, const uint32_t *idx)
+{
+    assert(out != in);
+    assert(out->base == in->base && out->base->split_degree == 1);
+    const uint64_t N = out->base->N;
+    out->rns_mask = in->rns_mask;
+    for (size_t j = 0; j < out->base->l; j++)
+    {
+        if (!(out->rns_mask & (1ULL << j)))
+            RNS_ROW_ZERO(out, j, N);
+        else if (rns_row_is_narrow(out->base, j))
+            rns_row_gather_narrow(out->rows32[j], in->rows32[j], idx, N);
+        else
+            rns_row_gather_wide(out->rows64[j], in->rows64[j], idx, N);
+    }
+}
+
 void polynomial_int_permute_mod_Q(IntPolynomial out, IntPolynomial in, uint64_t gen)
 {
     const uint64_t N = in->N;

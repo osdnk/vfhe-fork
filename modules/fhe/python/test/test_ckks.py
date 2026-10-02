@@ -69,6 +69,25 @@ def test_rotation(k):
     assert all(abs(dec_rot[i] - values[(i + k) % M]) < 0.05 for i in range(M))
 
 
+def test_hoisted_rotations():
+    # Several rotations of one ciphertext share its decomposition; CKKS
+    # decode does not strip noise, so this also bounds what hoisting adds.
+    scheme = CKKS_Scheme(
+        Ring(N, 300, split_degree=1), scaling_factor=2**25, special_primes=1
+    )
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    values = rand_values(N // 2)
+    ct = scheme.encrypt(scheme.encode(values), key)
+    ks = [1, 3, 7, N // 2 - 1]
+    gens = [pow(5, k, 2 * N) for k in ks]
+    ksks = [scheme.gen_rotation_key(key, k) for k in ks]
+    M = N // 2
+    for k, out in zip(ks, scheme.automorphisms(ct, gens, ksks), strict=True):
+        assert isinstance(out, CKKS_Ciphertext) and out.delta == ct.delta
+        dec = scheme.decode(scheme.decrypt(out, key))
+        assert all(abs(dec[i] - values[(i + k) % M]) < 0.05 for i in range(M))
+
+
 def test_keyswitch_ghs():
     # Direct GHS key switching: re-encrypt a ciphertext under a fresh key. Unlike
     # the MLWE-level test, CKKS decode does not strip noise, so this only works

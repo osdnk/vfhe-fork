@@ -754,13 +754,23 @@ class MLWE:
 
         Operations that derive a new ciphertext from an existing one allocate it
         through here, so a subclass (e.g. ``CKKS_Ciphertext``) keeps its type and
-        its extra metadata instead of decaying into a plain ``MLWE``. ``lvl``
-        defaults to ``self.lvl``; ``ring`` and ``rank`` default as in
-        :meth:`__init__`.
+        its extra metadata instead of decaying into a plain ``MLWE``.
+
+        With neither ``lvl`` nor ``ring`` the result has ``self``'s shape: its
+        ring (special primes included), level, rank and ``is_extended``.
+        Otherwise ``lvl`` defaults to ``self.lvl``, and ``ring`` and ``rank``
+        default as in :meth:`__init__`.
         """
+        same_shape = lvl is None and ring is None
+        if same_shape:
+            ring = self.ring
+            if rank is None:
+                rank = self.r
         out = type(self)(
             self.scheme, lvl=self.lvl if lvl is None else lvl, ring=ring, rank=rank
         )
+        if same_shape:
+            out.is_extended = self.is_extended
         out._inherit(self)  # noqa: SLF001 - same class
         return out
 

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import numbers
 from math import log2
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 # The AVX-512 complex FFT casts these buffers to __m512d and uses aligned loads,
 # so they must be 64-byte aligned; more than cffi's default. Shared with the other
@@ -18,6 +19,9 @@ from vfhe.arith.impl.rns.polynomial import (
 from vfhe.arith.registry import register
 from vfhe.arith.spec import Capability, Constraints, Spec
 from vfhe.engine import ffi, lib
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class ComplexRing:
@@ -134,25 +138,30 @@ class ComplexPolynomial:
         self.ring.lib.bit_reverse_array(self.obj, self.ring.N, self.ring.logN)
 
     def __imul__(self, other):
-        if type(other) is int or type(other) is float:
+        if isinstance(other, numbers.Real):
             self.ring.lib.complex_poly_scale_double(self.obj, float(other), self.ring.N)
             return self
         else:
             raise NotImplementedError(f"cannot scale by {type(other).__name__}")
 
-    def __setitem__(self, idx, val: complex):
-        if type(val) is float or type(val) is int:
-            self.obj[idx] = val
-            self.obj[idx + self.ring.N] = 0.0
-        elif type(val) is complex:
-            self.obj[idx] = float(val.real)
-            self.obj[idx + self.ring.N] = float(val.imag)
-        else:
+    def __setitem__(self, idx, val: numbers.Complex | complex):
+        if not isinstance(val, numbers.Complex):
             raise NotImplementedError(f"cannot assign a {type(val).__name__}")
+        val = complex(val)
+        self.obj[idx] = val.real
+        self.obj[idx + self.ring.N] = val.imag
 
-    def from_array(self, v: list[float | complex]) -> ComplexPolynomial:
-        for i in range(len(v)):
-            self[i] = v[i]
+    def from_array(self, v: Sequence[numbers.Complex | complex]) -> ComplexPolynomial:
+        """Sets the first ``len(v)`` values; any ``numbers.Complex`` is accepted."""
+        if len(v) > self.ring.N:
+            raise ValueError(f"Expected at most {self.ring.N} values, got {len(v)}")
+        for val in v:
+            if not isinstance(val, numbers.Complex):
+                raise NotImplementedError(f"cannot assign a {type(val).__name__}")
+        values = [complex(val) for val in v]
+        n = len(values)
+        self.obj[0:n] = [val.real for val in values]
+        self.obj[self.ring.N : self.ring.N + n] = [val.imag for val in values]
         return self
 
     def round_to_RNS(self, ring: RNSRing) -> RNSPolynomial:

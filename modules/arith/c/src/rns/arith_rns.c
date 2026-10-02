@@ -3,6 +3,7 @@
 #include <arith_generic.h>
 
 #include "arith_dispatch.h"
+#include <pthread.h>
 #include <util.h>
 
 // RNS as an implementation of the generic arithmetic interface.
@@ -302,36 +303,42 @@ static const ArithMethods RNS_NTT_METHODS = {
 // Rings are shared and never freed, the same contract the RNS base they borrow
 // already has: an element does not point at its ring (arith_* takes it as an
 // argument), but a structure built over one may hold it, and nothing can prove
-// the last such structure is gone. The table is tiny -- one entry per distinct
-// (N, mask, base) a process uses.
-#define ARITH_RNS_RING_CACHE_MAX 256
-
-static struct
+// the last such structure is gone. So every lookup of one (N, mask, base)
+// returns the same handle, and the table grows to hold every ring a process
+// uses. The lock covers the growth: a lookup must not scan a table that a
+// concurrent insertion is reallocating.
+typedef struct
 {
     uint64_t N, mask;
     RNS_Base base;
     ArithRing ring;
-} ring_cache[ARITH_RNS_RING_CACHE_MAX];
-static size_t ring_cache_len = 0;
+} RingCacheEntry;
+
+static RingCacheEntry *ring_cache = NULL;
+static size_t ring_cache_len = 0, ring_cache_cap = 0;
+static pthread_mutex_t ring_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 
 ArithRing arith_rns_ring_get(uint64_t N, uint64_t rns_mask, RNS_Base base)
 {
+    pthread_mutex_lock(&ring_cache_lock);
     for (size_t i = 0; i < ring_cache_len; i++)
     {
         if (ring_cache[i].N == N && ring_cache[i].mask == rns_mask && ring_cache[i].base == base)
         {
-            return ring_cache[i].ring;
+            ArithRing ring = ring_cache[i].ring;
+            pthread_mutex_unlock(&ring_cache_lock);
+            return ring;
         }
     }
-    ArithRing ring = arith_rns_ring_new(N, rns_mask, base);
-    if (ring_cache_len < ARITH_RNS_RING_CACHE_MAX)
+    if (ring_cache_len == ring_cache_cap)
     {
-        ring_cache[ring_cache_len].N = N;
-        ring_cache[ring_cache_len].mask = rns_mask;
-        ring_cache[ring_cache_len].base = base;
-        ring_cache[ring_cache_len].ring = ring;
-        ring_cache_len++;
+        ring_cache_cap = ring_cache_cap ? 2 * ring_cache_cap : 64;
+        ring_cache =
+            (RingCacheEntry *)safe_realloc(ring_cache, ring_cache_cap * sizeof(*ring_cache));
     }
+    ArithRing ring = arith_rns_ring_new(N, rns_mask, base);
+    ring_cache[ring_cache_len++] = (RingCacheEntry){N, rns_mask, base, ring};
+    pthread_mutex_unlock(&ring_cache_lock);
     return ring;
 }
 
@@ -339,11 +346,13 @@ ArithRing arith_rns_ring_get(uint64_t N, uint64_t rns_mask, RNS_Base base)
 // point at a method table in the retired library.
 void arith_rns_ring_cache_clear(void)
 {
+    pthread_mutex_lock(&ring_cache_lock);
     for (size_t i = 0; i < ring_cache_len; i++)
     {
         arith_ring_free(ring_cache[i].ring);
     }
     ring_cache_len = 0;
+    pthread_mutex_unlock(&ring_cache_lock);
 }
 
 ArithRing arith_rns_ring_new(uint64_t N, uint64_t rns_mask, RNS_Base base)

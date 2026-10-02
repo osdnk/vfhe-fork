@@ -246,6 +246,97 @@ void mlwe_automorphism_RNSc_GHS(RNSc_MLWE out, RNSc_MLWE in, uint64_t gen, RNS_M
     free_mlwe_RNS_sample(tmp);
 }
 
+struct _MLWE_Hoisted
+{
+    RNSc_MLWE in;
+    // One per component; empty for a component the key passes through.
+    GadgetDigits *digits;
+    ArithRing key_ring;
+    uint64_t log_base;
+};
+
+MLWE_Hoisted mlwe_hoist(RNSc_MLWE in, RNS_MLWE_KS_Key ksk)
+{
+    assert(ksk->count == in->r);
+    MLWE_Hoisted h = (MLWE_Hoisted)safe_malloc(sizeof(*h));
+    h->in = mlwe_alloc_sample(in->ring, in->r);
+    mlwe_copy_RNSc_sample(h->in, in);
+    h->key_ring = ksk->ring;
+    h->log_base = ksk->log_base;
+    h->digits = (GadgetDigits *)safe_malloc(in->r * sizeof(GadgetDigits));
+    for (size_t i = 0; i < in->r; i++)
+    {
+        if (ksk->s[i] == NULL)
+            h->digits[i] = (GadgetDigits){NULL, 0};
+        else
+            gadget_decompose(&h->digits[i], ksk->s[i], &in->a[i], ksk->log_base);
+    }
+    return h;
+}
+
+void free_mlwe_hoisted(MLWE_Hoisted h)
+{
+    for (size_t i = 0; i < h->in->r; i++)
+        gadget_digits_free(&h->digits[i]);
+    free(h->digits);
+    free_mlwe_RNS_sample(h->in);
+    free(h);
+}
+
+static int mlwe_hoisted_fits(MLWE_Hoisted h, RNS_MLWE_KS_Key ksk)
+{
+    if (ksk->ring != h->key_ring || ksk->log_base != h->log_base || ksk->count != h->in->r)
+        return 0;
+    for (size_t i = 0; i < h->in->r; i++)
+    {
+        if ((ksk->s[i] == NULL) != (h->digits[i].n == 0))
+            return 0;
+    }
+    return 1;
+}
+
+// The hybrid key switch of Aut_gen(in), as mlwe_automorphism_RNSc_GHS computes
+// it, with the decomposition taken from `h` instead of recomputed.
+int mlwe_automorphism_RNSc_GHS_hoisted(RNSc_MLWE out, MLWE_Hoisted h, uint64_t gen,
+                                       RNS_MLWE_KS_Key ksk, uint64_t lvl)
+{
+    (void)lvl;
+    if (!mlwe_hoisted_fits(h, ksk))
+        return -1;
+    RNSc_MLWE in = h->in;
+    RNSc_MLWE acc = mlwe_alloc_sample(ksk->ring, out->r);
+    mlwe_RNS_trivial_sample_of_zero(acc);
+    for (size_t i = 0; i < in->r; i++)
+    {
+        if (ksk->s[i] != NULL)
+            gadget_mul_subto_automorphism(acc, ksk->s[i], &h->digits[i], gen);
+    }
+    mlwe_RNS_to_RNSc(acc, acc);
+    mlwe_round_division(acc, in->ring);
+
+    // The components that keep the target key, and b, as the key switch folds
+    // them in: after the rescale, in `in`'s ring.
+    ArithElement permuted;
+    arith_new(in->ring, &permuted);
+    size_t keep_idx = 0;
+    for (size_t i = 0; i < in->r; i++)
+    {
+        if (ksk->s[i] == NULL)
+        {
+            arith_permute(in->ring, &permuted, &in->a[i], gen);
+            arith_add(acc->ring, &acc->a[keep_idx], &acc->a[keep_idx], &permuted);
+            keep_idx++;
+        }
+    }
+    arith_permute(in->ring, &permuted, &in->b, gen);
+    arith_add(acc->ring, &acc->b, &acc->b, &permuted);
+    arith_free(in->ring, &permuted);
+
+    mlwe_copy_RNSc_sample(out, acc);
+    free_mlwe_RNS_sample(acc);
+    return 0;
+}
+
 void mlwe_partial_trace(RNSc_MLWE out, RNSc_MLWE in, uint64_t *gens, RNS_MLWE_KS_Key *ksks,
                         uint64_t size, uint64_t lvl)
 {

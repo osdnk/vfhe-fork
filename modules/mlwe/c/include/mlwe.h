@@ -175,6 +175,20 @@ extern "C"
     void free_mlwe_RNS_ks_key(RNS_MLWE_KS_Key key);
     void mlwe_RNSc_GHS_hybrid_keyswitch(RNSc_MLWE out, RNSc_MLWE in, RNS_MLWE_KS_Key ksk,
                                         uint64_t lvl);
+    // Several automorphisms of one sample, key-switched with the input's
+    // decomposition computed once (hoisting): `mlwe_hoist` copies `in` and
+    // decomposes it against the gadget and ring of `ksk`; each
+    // mlwe_automorphism_RNSc_GHS_hoisted then costs the key products alone,
+    // and agrees with mlwe_automorphism_RNSc_GHS up to the noise. Any key with
+    // that gadget, ring and pass-through pattern serves -- automorphism keys
+    // for one level generated together all do -- and a key that does not is
+    // refused with -1, leaving `out` untouched. The hoisted sample is read
+    // only, so threads may share it.
+    typedef struct _MLWE_Hoisted *MLWE_Hoisted;
+    MLWE_Hoisted mlwe_hoist(RNSc_MLWE in, RNS_MLWE_KS_Key ksk);
+    void free_mlwe_hoisted(MLWE_Hoisted h);
+    int mlwe_automorphism_RNSc_GHS_hoisted(RNSc_MLWE out, MLWE_Hoisted h, uint64_t gen,
+                                           RNS_MLWE_KS_Key ksk, uint64_t lvl);
     void mlwe_partial_trace(RNSc_MLWE out, RNSc_MLWE in, uint64_t *gens, RNS_MLWE_KS_Key *ksks,
                             uint64_t size, uint64_t lvl);
     void mlwe_trace(RNSc_MLWE out, RNSc_MLWE in, RNS_MLWE_KS_Key *ksks, uint64_t lvl);
@@ -198,6 +212,29 @@ extern "C"
     // How many base-2^log_base digits the radix gadget takes for one residue
     // modulo `prime`: enough to cover every value below it.
     uint64_t gadget_radix_digits(uint64_t prime, uint64_t log_base);
+
+    // The gadget decomposition of one element, kept for several products: `n`
+    // digits over the key's ring, in the order its keys are, each lifted and
+    // ready to multiply (or, on a ring that is not fully split, canonical).
+    typedef struct
+    {
+        ArithElement *digit;
+        uint64_t n;
+    } GadgetDigits;
+
+    // Decompose `poly` as gadget_mul_*to_polynomial would against `ksk` and
+    // `log_base`, keeping the digits; `ksk` fixes only the key ring and the
+    // gadget, so any key array generated for both serves.
+    void gadget_decompose(GadgetDigits *out, RNS_MLWE *ksk, const ArithElement *poly,
+                          uint64_t log_base);
+    void gadget_digits_free(GadgetDigits *digits);
+    // out -= sum_i Aut_gen(digit_i) * ksk[i]. The image of a decomposition
+    // under an automorphism is a decomposition of the image with the same
+    // digit bounds, so this is the gadget product of Aut_gen(poly) -- up to
+    // which representative each digit takes, not bit for bit. `gen` is odd and
+    // below 2N; 1 is the identity.
+    void gadget_mul_subto_automorphism(RNS_MLWE out, RNS_MLWE *ksk, const GadgetDigits *digits,
+                                       uint64_t gen);
 
     // `ell` is the number of gadget keys per component of the MGSW key -- one
     // per prime for the RNS gadget (`log_base` 0), one per prime and digit for

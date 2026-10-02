@@ -96,6 +96,9 @@ void mlwe_full_packing_keyswitch(void *out, void *in, uint64_t size, void *ksk, 
 void mlwe_full_packing_keyswitch_scaled(void *vec, uint64_t ell, void *ksks, uint64_t lvl);
 void mlwe_RNSc_GHS_hybrid_keyswitch(void *out, void *in, void *ksk, uint64_t lvl);
 void mlwe_automorphism_RNSc_GHS(void *out, void *in, uint64_t gen, void *ksk, uint64_t lvl);
+void *mlwe_hoist(void *in, void *ksk);
+void free_mlwe_hoisted(void *h);
+int mlwe_automorphism_RNSc_GHS_hoisted(void *out, void *h, uint64_t gen, void *ksk, uint64_t lvl);
 void mlwe_partial_trace(void *out, void *in, uint64_t *gens, void *ksks, uint64_t size, uint64_t lvl);
 void mlwe_trace(void *out, void *in, void *ksks, uint64_t lvl);
 uint64_t mlwe_extended_rank(uint64_t r);

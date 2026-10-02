@@ -863,6 +863,13 @@ void ntt_free_precompute(uint64_t **ws, uint64_t **w_precon, uint64_t n);
     void polynomial_base_conversion_RNSc(RNSc_Polynomial out, RNSc_Polynomial in,
                                          RNS_BaseConversionParams params);
     void polynomial_RNSc_permute(RNSc_Polynomial out, RNSc_Polynomial in, uint64_t gen);
+    // The same automorphism on the NTT representation of a ring with
+    // split_degree 1, where it only reorders the transform's points: `idx`
+    // (N entries) is the order, filled for one `gen` (odd, below 2N) by
+    // polynomial_RNS_automorphism_index and reusable for every polynomial of
+    // that dimension. `out` and `in` are distinct and share a base.
+    void polynomial_RNS_automorphism_index(uint32_t *idx, uint64_t N, uint64_t gen);
+    void polynomial_RNS_permute(RNS_Polynomial out, RNS_Polynomial in, const uint32_t *idx);
     void free_RNS_polynomial(void *p);
     void polynomial_RNSc_negate(RNSc_Polynomial out, RNSc_Polynomial in);
     void polynomial_add_RNSc_polynomial(RNSc_Polynomial out, RNSc_Polynomial in1,

@@ -422,6 +422,47 @@ class MLWE_Scheme:
         out.repr = repr.coeff
         return out
 
+    def automorphisms(
+        self,
+        c: CtT,
+        gens: Sequence[int],
+        ksks: Sequence[MLWE_Set | list[MLWE_Set]],
+    ) -> list[CtT]:
+        """Applies each of ``gens`` to ``c``, ``ksks[i]`` being the key for ``gens[i]``.
+
+        The same results as :meth:`automorphism` call by call, up to the noise,
+        but ``c`` is decomposed against the gadget once and every automorphism
+        reuses it (hoisting), so each one costs only its key products. The keys
+        must share a gadget and a ring, as automorphism keys for one level
+        generated together do.
+        """
+        if len(gens) != len(ksks):
+            raise ValueError("expected one key per generator")
+        if not gens:
+            return []
+        for gen in gens:
+            if not (0 < gen < 2 * self.N and gen % 2 == 1):
+                raise ValueError(f"{gen} is not an odd generator below 2N")
+        keys = [k if isinstance(k, MLWE_Set) else k[c.lvl] for k in ksks]
+        c.to_coeff()
+        hoisted = lib_rlwe.lib.mlwe_hoist(c.obj, keys[0].obj)
+        try:
+            outs = []
+            for gen, ksk in zip(gens, keys, strict=True):
+                out = c.new_like(lvl=c.lvl, ring=self.rings[c.lvl])
+                status = lib_rlwe.lib.mlwe_automorphism_RNSc_GHS_hoisted(
+                    out.obj, hoisted, gen, ksk.obj, c.lvl
+                )
+                if status != 0:
+                    raise ValueError(
+                        "the keys do not share one gadget, ring and component layout"
+                    )
+                out.repr = repr.coeff
+                outs.append(out)
+        finally:
+            lib_rlwe.lib.free_mlwe_hoisted(hoisted)
+        return outs
+
     def trace(self, c: CtT, ksk: MLWE_Set | list[MLWE_Set]) -> CtT:
         ksk = ksk if isinstance(ksk, MLWE_Set) else ksk[c.lvl]
         out = c.new_like(lvl=c.lvl, ring=self.rings[c.lvl])

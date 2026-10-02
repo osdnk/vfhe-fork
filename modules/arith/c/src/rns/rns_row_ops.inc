@@ -161,6 +161,14 @@ static void RNS_FN(rns_row_permute_gather)(int64_t *out, const RNS_W *in, uint64
     }
 }
 
+/* The automorphism in the mul domain: the transform's points are only
+   reordered, so it is a plain gather by `idx`. */
+static void RNS_FN(rns_row_gather)(RNS_W *out, const RNS_W *in, const uint32_t *idx, uint64_t n)
+{
+    for (uint64_t i = 0; i < n; i++)
+        out[i] = in[idx[i]];
+}
+
 // Slot moves: strided copies within a row, one block at a time.
 static void RNS_FN(rns_row_broadcast_slot)(RNS_W *out, const RNS_W *in, uint64_t slot_idx,
                                            uint64_t split_degree, uint64_t poly_size)

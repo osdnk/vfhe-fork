@@ -526,6 +526,81 @@ def test_derived_samples_keep_the_shape(ghs):
     assert copied.get_b_poly() == product.get_b_poly()
 
 
+def _log2_noise(scheme, out, c, gen, key):
+    """Bits of what the automorphism's key switch added to the phase."""
+    diff = scheme.phase(out, key) - scheme.phase(c, key).automorphism(gen)
+    return max(abs(x) for x in diff.get_polynomial(signed=True)).bit_length()
+
+
+def _check_hoisted(scheme, Rp, key, m0, c, radix):
+    gens = [1, 5, 25, 2 * scheme.N - 1]
+    ksks = [
+        scheme.gen_ksk_automorphism(key, key, g, radix_log_base=radix) for g in gens
+    ]
+    hoisted = scheme.automorphisms(c, gens, ksks)
+    for gen, ksk, out in zip(gens, ksks, hoisted, strict=True):
+        assert out.lvl == c.lvl and out.ring == c.ring
+        alone = scheme.automorphism(c, gen, ksk)
+        assert _log2_noise(scheme, out, c, gen, key) <= (
+            _log2_noise(scheme, alone, c, gen, key) + 2
+        )
+        # The RNS gadget without a special prime leaves about 2^52 of noise,
+        # which a level's smaller modulus no longer absorbs, hoisted or not.
+        expected = m0.automorphism(gen)
+        if scheme.phase(alone, key).round_division(Rp) == expected:
+            assert scheme.phase(out, key).round_division(Rp) == expected
+
+
+@pytest.mark.parametrize("scheme_fixture", ["bv", "ghs"])
+@pytest.mark.parametrize("radix", [None, RADIX_LOG_BASE])
+@pytest.mark.parametrize("lvl", [0, 1])
+def test_hoisted_automorphisms_match_the_unhoisted_ones(
+    scheme_fixture, radix, lvl, request
+):
+    _Rq, Rp, scheme = request.getfixturevalue(scheme_fixture)
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    m0 = Rp.random_element()
+    c = enc(scheme, Rp, m0, key)
+    if lvl:
+        c.round_division(lvl=lvl)
+    _check_hoisted(scheme, Rp, key, m0, c, radix)
+
+
+@pytest.mark.parametrize("r, N_r", RANK_DIMS)
+@pytest.mark.parametrize("radix", [None, RADIX_LOG_BASE])
+def test_hoisted_automorphisms_module_rank(r, N_r, radix):
+    _Rq, Rp, scheme = _rank_scheme(N_r, r, special_primes=1)
+    key = _rank_key(scheme, N_r, r)
+    m0 = Rp.random_element()
+    _check_hoisted(scheme, Rp, key, m0, enc(scheme, Rp, m0, key), radix)
+
+
+@pytest.mark.parametrize("split_degree", [2, 4])
+def test_hoisted_automorphisms_on_a_ring_that_is_not_fully_split(split_degree):
+    # There the transform's points are not single evaluations, so the digits
+    # are kept canonical and permuted before each product.
+    Rq = Ring(N, prime_size=[45, 45, 45, 50], split_degree=split_degree)
+    Rp = Rq.quotient_ring(ell=1)
+    scheme = MLWE_Scheme(Rq, special_primes=1, module_rank=1)
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    m0 = Rp.random_element()
+    _check_hoisted(scheme, Rp, key, m0, enc(scheme, Rp, m0, key), None)
+
+
+def test_hoisted_automorphisms_refuse_a_key_of_another_gadget(ghs):
+    _Rq, Rp, scheme = ghs
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    c = enc(scheme, Rp, Rp.random_element(), key)
+    ksks = [
+        scheme.gen_ksk_automorphism(key, key, 5),
+        scheme.gen_ksk_automorphism(key, key, 25, radix_log_base=RADIX_LOG_BASE),
+    ]
+    with pytest.raises(ValueError, match="gadget"):
+        scheme.automorphisms(c, [5, 25], ksks)
+    with pytest.raises(ValueError, match="generator"):
+        scheme.automorphisms(c, [4], ksks[:1])
+
+
 def test_gen_ksk_rejects_a_radix_larger_than_the_primes(bv):
     _Rq, _Rp, scheme = bv
     key = scheme.key_gen_sparse(N // 8, 3.2)

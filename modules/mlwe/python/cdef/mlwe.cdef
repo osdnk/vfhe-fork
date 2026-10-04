@@ -53,7 +53,7 @@ void *lwe_new_sparse_ternary_key(uint64_t n, uint64_t mask, void *base, uint64_t
 void lwe_sample(void *c, uint64_t *m, void *key);
 void *lwe_new_sample(uint64_t *m, void *key);
 void *lwe_new_trivial_sample(uint64_t *m, uint64_t n, uint64_t mask, void *base);
-void lwe_phase(uint64_t *out, void *c, void *key);
+void lwe_linear_decrypt(uint64_t *out, void *c, void *key);
 void lwe_subto(void *out, void *in);
 
 // --- mlwe (rns) ---
@@ -66,7 +66,7 @@ void free_mlwe_RNS_sample(void *p);
 void free_mlwe_RNS_key(void *key);
 
 void mlwe_RNSc_sample(void *out, void *key, ArithElement *m);
-void mlwe_RNS_phase(ArithElement *out, void *in, void *key);
+void mlwe_RNS_linear_decrypt(ArithElement *out, void *in, void *key);
 void mlwe_RNSc_to_RNS(void *out, void *in);
 void mlwe_RNS_to_RNSc(void *out, void *in);
 void mlwe_copy_RNS_sample(void *out, void *in);

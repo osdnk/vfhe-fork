@@ -137,10 +137,10 @@ class CKKS_Scheme(MLWE_Scheme):
         ``drop=False`` keeps every prime.
         """
         if not drop:
-            return self.phase(ciphertext, key)
+            return self.linear_decrypt(ciphertext, key)
         delta = getattr(ciphertext, "delta", self.scaling_factor)
         target = self._decryption_ring(ciphertext.ring, delta, message_bound)
-        return self.phase(ciphertext, key, ring=target)
+        return self.linear_decrypt(ciphertext, key, ring=target)
 
     def _decryption_ring(
         self, ring: RNSRing, delta: float, message_bound: float | None

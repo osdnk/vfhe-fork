@@ -122,7 +122,7 @@ extern "C"
     RNSc_MLWE mlwe_new_RNSc_sample_of_zero(RNS_MLWE_Key key);
     RNS_MLWE mlwe_new_RNS_trivial_sample_of_zero(uint64_t N, uint64_t r, uint64_t mask,
                                                  RNS_Base base);
-    void mlwe_RNS_phase(ArithElement *out, RNS_MLWE in, RNS_MLWE_Key key);
+    void mlwe_RNS_linear_decrypt(ArithElement *out, RNS_MLWE in, RNS_MLWE_Key key);
     void mlwe_RNSc_to_RNS(RNS_MLWE out, RNSc_MLWE in);
     void mlwe_RNS_to_RNSc(RNSc_MLWE out, RNS_MLWE in);
 
@@ -305,7 +305,7 @@ extern "C"
     void lwe_sample(LWE c, uint64_t *m, LWE_Key key);
     LWE lwe_new_sample(uint64_t *m, LWE_Key key);
     LWE lwe_new_trivial_sample(uint64_t *m, uint64_t n, uint64_t mask, RNS_Base base);
-    void lwe_phase(uint64_t *out, LWE c, LWE_Key key);
+    void lwe_linear_decrypt(uint64_t *out, LWE c, LWE_Key key);
     void lwe_subto(LWE out, LWE in);
     LWE_KS_Key lwe_new_KS_key(LWE_Key out_key, LWE_Key in_key, uint64_t t, uint64_t base_bit);
     void lwe_keyswitch(LWE out, LWE in, LWE_KS_Key ks_key);

@@ -220,13 +220,13 @@ class BFV_Scheme(MLWE_Scheme):
 
     def decrypt(self, ciphertext: MLWE, key: MLWE_Key) -> RNSPolynomial:
         """Decrypts a ciphertext back into a plaintext polynomial."""
-        return self.phase(ciphertext, key).round_division(self.plaintext_ring)
+        return self.linear_decrypt(ciphertext, key).round_division(self.plaintext_ring)
 
     def mod_switch(self, ciphertext: MLWE, lvl: int | None = None) -> MLWE:
         """Switches the ciphertext down to level ``lvl`` (the next one by default).
 
-        The round-division divides the phase and ``Delta`` alike, so the
-        message is unchanged and the noise shrinks with the modulus.
+        The round-division divides the linear decryption and ``Delta`` alike, so
+        the message is unchanged and the noise shrinks with the modulus.
         """
         lvl = ciphertext.lvl + 1 if lvl is None else lvl
         if not (0 <= lvl < len(self.rings)):
@@ -264,10 +264,10 @@ class BFV_Scheme(MLWE_Scheme):
     ) -> MLWE:
         """Multiplies two ciphertexts and (optionally) relinearizes.
 
-        Two ``Delta``-scaled phases multiply to a ``Delta^2``-scaled one, so
-        the product is divided by ``Delta`` to come back. That division is over
-        the integers, not modulo ``q``: the operands move up into a ring wide
-        enough to hold the product, are divided there, and come back. See
+        Two ``Delta``-scaled linear decryptions multiply to a ``Delta^2``-scaled
+        one, so the product is divided by ``Delta`` to come back. That division
+        is over the integers, not modulo ``q``: the operands move up into a ring
+        wide enough to hold the product, are divided there, and come back. See
         :meth:`mul_rings`.
 
         Args:
@@ -354,9 +354,9 @@ class BFV_Scheme(MLWE_Scheme):
         """``ciphertext``'s components as elements of ``ring``, for the product.
 
         The fast base extension is enough, though it writes ``x + u*q``: over
-        the integers a phase is already ``Delta*m + e + q*r``, ``u*q`` only
-        adds to ``r``, and every such term divides out of the product modulo
-        ``q``. The price is the operand size `mul_rings` accounts for.
+        the integers a linear decryption is already ``Delta*m + e + q*r``,
+        ``u*q`` only adds to ``r``, and every such term divides out of the
+        product modulo ``q``. The price is the operand size `mul_rings` accounts for.
         """
         ciphertext.to_coeff()
         out = MLWE(self, ring=ring, rank=ciphertext.r)

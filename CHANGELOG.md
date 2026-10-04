@@ -152,6 +152,10 @@ versions may contain breaking changes.
 
 ### Changed
 
+- Rename the phase `b - <a, s>` to the linear decryption, the scheme-neutral
+  term: `MLWE_Scheme.phase` and `LWE.phase` become `linear_decrypt`, and the
+  native `mlwe_RNS_phase` / `lwe_phase` become `mlwe_RNS_linear_decrypt` /
+  `lwe_linear_decrypt`. The old names are removed.
 - `CKKS_Scheme.decode` reconstructs the coefficients natively
   (`polynomial_RNSc_to_centered_doubles`: mixed-radix digits in modular
   arithmetic, read in floating point only at the end, so exact up to the
@@ -164,13 +168,13 @@ versions may contain breaking changes.
   former at N=2^16).
 - `CKKS_Scheme.decrypt` returns the plaintext over the fewest primes that
   hold it -- the last level for a ciphertext at the scheme's scale, higher for
-  one at a larger `delta` -- computing the phase over those primes only, so
-  decrypting and decoding a level-0 ciphertext at N=2^16 over 9 primes takes
-  2.65 ms instead of 21.9. `message_bound=` sets the bound on the slots it
-  assumes; `drop=False` keeps every prime.
-- `MLWE_Scheme.phase` reuses a key over a wider ring instead of rebuilding it
-  for the ciphertext's ring, and takes `ring=` to compute the phase modulo a
-  quotient only; `MLWE_Key.at_ring(ring)` builds the key over another ring
+  one at a larger `delta` -- computing the linear decryption over those primes
+  only, so decrypting and decoding a level-0 ciphertext at N=2^16 over 9 primes
+  takes 2.65 ms instead of 21.9. `message_bound=` sets the bound on the slots
+  it assumes; `drop=False` keeps every prime.
+- `MLWE_Scheme.linear_decrypt` reuses a key over a wider ring instead of
+  rebuilding it for the ciphertext's ring, and takes `ring=` to compute it
+  modulo a quotient only; `MLWE_Key.at_ring(ring)` builds the key over another ring
   once and keeps it. `Polynomial.mod_reduce` keeps the element's domain.
 - `dynamic_extensions` names a compiled module after the flags it was built
   with and the compiler that built it, version included, as well as its

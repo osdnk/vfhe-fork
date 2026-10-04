@@ -133,9 +133,14 @@ class LWE:
         if hasattr(self, "obj") and self.obj is not None:
             lib_lwe.lib.free_lwe_sample(self.obj)
 
-    def phase(self, key: LWE_Key, recompose: bool = False) -> list[int] | int:
+    def linear_decrypt(self, key: LWE_Key, recompose: bool = False) -> list[int] | int:
+        """The linear part of decrypting this sample under ``key``.
+
+        This is ``b - <a, s>`` per limb (the encoded message plus the noise),
+        CRT-recomposed into one integer with ``recompose``.
+        """
         out_arr = ffi.new("uint64_t[]", self.l)
-        lib_lwe.lib.lwe_phase(out_arr, self.obj, key.obj)
+        lib_lwe.lib.lwe_linear_decrypt(out_arr, self.obj, key.obj)
         out = self._from_native([int(x) for x in out_arr])
         if recompose:
             return crt(out, self.ring.primes)

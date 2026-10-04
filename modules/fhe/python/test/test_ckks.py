@@ -636,4 +636,4 @@ def test_decrypt_drops_to_the_lowest_level_that_holds_the_message():
     # The key over the target ring is built once and kept.
     assert key.at_ring(scheme.rings[-1]) is key.at_ring(scheme.rings[-1])
     with pytest.raises(ValueError, match="quotient"):
-        scheme.phase(scheme.rescale(cx * cy), key, ring=scheme.rings[0])
+        scheme.linear_decrypt(scheme.rescale(cx * cy), key, ring=scheme.rings[0])

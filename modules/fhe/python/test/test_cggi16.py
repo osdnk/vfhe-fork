@@ -54,5 +54,5 @@ def test_functional_bootstrap(deterministic_prng):
     output_lwe_key_ell2 = LWE_Key(
         ring=in_ring, key=output_lwe_key.get_s(), n=output_lwe_key.n
     )
-    phase = out_lwe.phase(output_lwe_key_ell2, recompose=True)
-    assert mod_switch(phase, in_ring.q_l, 1 << msg_prec) == lut[msg_val]
+    decryption = out_lwe.linear_decrypt(output_lwe_key_ell2, recompose=True)
+    assert mod_switch(decryption, in_ring.q_l, 1 << msg_prec) == lut[msg_val]

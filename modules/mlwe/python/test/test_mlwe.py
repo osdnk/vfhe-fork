@@ -69,13 +69,13 @@ def test_encrypt_decrypt_add_sub_mul(bv):
     c0 = enc(scheme, Rp, m0, key)
     c1 = enc(scheme, Rp, m1, key)
 
-    assert scheme.phase(c0, key).round_division(Rp) == m0
-    assert scheme.phase(c1, key).round_division(Rp) == m1
-    assert scheme.phase(c0 + c1, key).round_division(Rp) == m0 + m1
-    assert scheme.phase(c0 - c1, key).round_division(Rp) == m0 - m1
+    assert scheme.linear_decrypt(c0, key).round_division(Rp) == m0
+    assert scheme.linear_decrypt(c1, key).round_division(Rp) == m1
+    assert scheme.linear_decrypt(c0 + c1, key).round_division(Rp) == m0 + m1
+    assert scheme.linear_decrypt(c0 - c1, key).round_division(Rp) == m0 - m1
 
     z = Rp.random_element()
-    assert scheme.phase(c0 * z, key).round_division(Rp) == m0 * z
+    assert scheme.linear_decrypt(c0 * z, key).round_division(Rp) == m0 * z
 
 
 def test_bv_keyswitch(bv):
@@ -86,7 +86,7 @@ def test_bv_keyswitch(bv):
     key2 = scheme.key_gen_sparse(N // 8, 3.2)
     ksk = scheme.gen_ksk(key2, key)
     c_out = scheme.keyswitch(c0, ksk)
-    assert scheme.phase(c_out, key2).round_division(Rp) == m0
+    assert scheme.linear_decrypt(c_out, key2).round_division(Rp) == m0
 
 
 def test_ghs_keyswitch(ghs):
@@ -97,7 +97,7 @@ def test_ghs_keyswitch(ghs):
     key2 = scheme.key_gen_sparse(N // 8, 3.2)
     ksk = scheme.gen_ksk(key2, key)
     c_out = scheme.keyswitch(c0, ksk)
-    assert scheme.phase(c_out, key2).round_division(Rp) == m0
+    assert scheme.linear_decrypt(c_out, key2).round_division(Rp) == m0
 
 
 def test_ghs_automorphism(ghs):
@@ -107,7 +107,7 @@ def test_ghs_automorphism(ghs):
     c0 = enc(scheme, Rp, m0, key)
     auto5 = scheme.gen_ksk_automorphism(key, key, 5)
     c_out = scheme.automorphism(c0, 5, auto5)
-    assert scheme.phase(c_out, key).round_division(Rp) == m0.automorphism(5)
+    assert scheme.linear_decrypt(c_out, key).round_division(Rp) == m0.automorphism(5)
 
 
 @pytest.mark.parametrize("scheme_fixture", ["bv", "ghs"])
@@ -122,7 +122,7 @@ def test_mlwe_multiplication(scheme_fixture, request):
     c1 = enc(scheme, Rp, m1, key)
     c2 = enc(scheme, Rp, m2, key)
 
-    m_out = scheme.phase(c1 * c2, key).round_division(Rp)
+    m_out = scheme.linear_decrypt(c1 * c2, key).round_division(Rp)
 
     assert _mul_error(Rq, Rp, scheme, m_out, m1, m2) < 1000
 
@@ -147,7 +147,7 @@ def test_mlwe_multiplication_deferred_relinearization(scheme_fixture, request):
     c_relin = scheme.relinearize(c_ext, rlk)
     assert c_relin.r == scheme.r
 
-    m_out = scheme.phase(c_relin, key).round_division(Rp)
+    m_out = scheme.linear_decrypt(c_relin, key).round_division(Rp)
 
     assert _mul_error(Rq, Rp, scheme, m_out, m1, m2) < 1000
 
@@ -162,7 +162,7 @@ def test_mgsw_external_product_identity(bv):
 
     ct_id = mgsw_scheme.encrypt(Polynomial(Rp).from_array([1] + [0] * (N - 1)), key)
     res = ct_id.external_product(ct1)
-    assert scheme.phase(res, key).round_division(Rp) == m1
+    assert scheme.linear_decrypt(res, key).round_division(Rp) == m1
 
 
 # Module ranks above 1, paired with a ring dimension that keeps the lattice
@@ -192,8 +192,8 @@ def _rank_key(scheme, N_r, r):
 def test_tensor_product_slot_layout(r, N_r):
     # The tensor product's documented contract: with the extended key made of
     # the quadratic terms -(s_i*s_j) (i <= j, lexicographic) followed by the
-    # linear terms s_i, the extended phase equals the product of the two input
-    # phases exactly (same ring, no rounding anywhere).
+    # linear terms s_i, the linear decryption under it equals the product of the
+    # two inputs' linear decryptions exactly (same ring, no rounding anywhere).
     _Rq, Rp, scheme = _rank_scheme(N_r, r, special_primes=0)
     key = _rank_key(scheme, N_r, r)
     c1 = enc(scheme, Rp, Rp.random_element(), key)
@@ -205,14 +205,14 @@ def test_tensor_product_slot_layout(r, N_r):
     ext_key = scheme.quadratic_key_polys(key) + key.poly
     assert len(ext_key) == scheme.extended_rank
 
-    ext_phase = slots[-1]
+    ext_decryption = slots[-1]
     for slot, t in zip(slots[:-1], ext_key, strict=False):
-        ext_phase = ext_phase - slot * t
+        ext_decryption = ext_decryption - slot * t
 
-    expected = scheme.phase(c1, key) * scheme.phase(c2, key)
-    ext_phase.to_coeff()
+    expected = scheme.linear_decrypt(c1, key) * scheme.linear_decrypt(c2, key)
+    ext_decryption.to_coeff()
     expected.to_coeff()
-    assert ext_phase == expected
+    assert ext_decryption == expected
 
 
 @pytest.mark.parametrize("r, N_r", RANK_DIMS)
@@ -225,12 +225,12 @@ def test_encrypt_decrypt_add_sub_mul_module_rank(r, N_r):
     c1 = enc(scheme, Rp, m1, key)
     assert c0.r == r
 
-    assert scheme.phase(c0, key).round_division(Rp) == m0
-    assert scheme.phase(c0 + c1, key).round_division(Rp) == m0 + m1
-    assert scheme.phase(c0 - c1, key).round_division(Rp) == m0 - m1
+    assert scheme.linear_decrypt(c0, key).round_division(Rp) == m0
+    assert scheme.linear_decrypt(c0 + c1, key).round_division(Rp) == m0 + m1
+    assert scheme.linear_decrypt(c0 - c1, key).round_division(Rp) == m0 - m1
 
     z = Rp.random_element()
-    assert scheme.phase(c0 * z, key).round_division(Rp) == m0 * z
+    assert scheme.linear_decrypt(c0 * z, key).round_division(Rp) == m0 * z
 
 
 @pytest.mark.parametrize("r, N_r", RANK_DIMS)
@@ -246,7 +246,7 @@ def test_keyswitch_module_rank(r, N_r, special_primes):
     ksk = scheme.gen_ksk(key2, key)
     c_out = scheme.keyswitch(c0, ksk)
     assert c_out.r == r
-    assert scheme.phase(c_out, key2).round_division(Rp) == m0
+    assert scheme.linear_decrypt(c_out, key2).round_division(Rp) == m0
 
 
 @pytest.mark.parametrize("r, N_r", RANK_DIMS)
@@ -257,7 +257,7 @@ def test_ghs_automorphism_module_rank(r, N_r):
     c0 = enc(scheme, Rp, m0, key)
     auto5 = scheme.gen_ksk_automorphism(key, key, 5)
     c_out = scheme.automorphism(c0, 5, auto5)
-    assert scheme.phase(c_out, key).round_division(Rp) == m0.automorphism(5)
+    assert scheme.linear_decrypt(c_out, key).round_division(Rp) == m0.automorphism(5)
 
 
 @pytest.mark.parametrize("r, N_r", RANK_DIMS)
@@ -274,7 +274,7 @@ def test_multiplication_module_rank(r, N_r, special_primes):
     c1 = enc(scheme, Rp, m1, key)
     c2 = enc(scheme, Rp, m2, key)
 
-    m_out = scheme.phase(c1 * c2, key).round_division(Rp)
+    m_out = scheme.linear_decrypt(c1 * c2, key).round_division(Rp)
 
     assert _mul_error(Rq, Rp, scheme, m_out, m1, m2) < 1000
 
@@ -299,16 +299,16 @@ def test_multiplication_deferred_relinearization_module_rank(r, N_r):
     c_relin = scheme.relinearize(c_ext, rlk)
     assert c_relin.r == r
 
-    m_out = scheme.phase(c_relin, key).round_division(Rp)
+    m_out = scheme.linear_decrypt(c_relin, key).round_division(Rp)
     assert _mul_error(Rq, Rp, scheme, m_out, m1, m2) < 1000
 
 
-def test_lwe_alloc_and_phase():
+def test_lwe_alloc_and_linear_decrypt():
     ring = Ring(N, prime_size=[20], split_degree=1)
     key = LWE_Key(ring, sec_sigma=3.2, err_sigma=3.2)
     sample = LWE(ring=ring, m=[12345], key=key)
-    phase = sample.phase(key)
-    assert isinstance(phase, list) and len(phase) == ring.ell
+    decryption = sample.linear_decrypt(key)
+    assert isinstance(decryption, list) and len(decryption) == ring.ell
     # a-vector is length n over each RNS limb; b matches
     assert len(sample.get_a()[0]) == ring.N
     assert len(sample.get_b()) == ring.ell
@@ -332,10 +332,10 @@ def test_lwe_limbs_follow_the_ring_over_a_populated_base():
         assert max(limb) < p
     for b, p in zip(sample.get_b(), ring.primes, strict=True):
         assert b < p
-    phases = sample.phase(rebuilt)
-    assert isinstance(phases, list)
-    for phase, m_j, p in zip(phases, m, ring.primes, strict=True):
-        err = (phase - m_j) % p
+    decryptions = sample.linear_decrypt(rebuilt)
+    assert isinstance(decryptions, list)
+    for decryption, m_j, p in zip(decryptions, m, ring.primes, strict=True):
+        err = (decryption - m_j) % p
         assert min(err, p - err) < 64
 
 
@@ -375,7 +375,7 @@ def test_keyswitch_radix_gadget(scheme_fixture, request):
     )
 
     c_out = scheme.keyswitch(c0, ksk)
-    assert scheme.phase(c_out, key2).round_division(Rp) == m0
+    assert scheme.linear_decrypt(c_out, key2).round_division(Rp) == m0
 
 
 def test_keyswitch_radix_beats_the_rns_gadget():
@@ -394,10 +394,10 @@ def test_keyswitch_radix_beats_the_rns_gadget():
         enc(scheme, Rp, m0, key),
         scheme.gen_ksk(key2, key, radix_log_base=RADIX_LOG_BASE),
     )
-    assert scheme.phase(radix, key2).round_division(Rp) == m0
+    assert scheme.linear_decrypt(radix, key2).round_division(Rp) == m0
 
     rns = scheme.keyswitch(enc(scheme, Rp, m0, key), scheme.gen_ksk(key2, key))
-    assert scheme.phase(rns, key2).round_division(Rp) != m0
+    assert scheme.linear_decrypt(rns, key2).round_division(Rp) != m0
 
 
 @pytest.mark.parametrize("r, N_r", RANK_DIMS)
@@ -412,7 +412,7 @@ def test_keyswitch_radix_module_rank(r, N_r, special_primes):
     ksk = scheme.gen_ksk(key2, key, radix_log_base=RADIX_LOG_BASE)
     c_out = scheme.keyswitch(c0, ksk)
     assert c_out.r == r
-    assert scheme.phase(c_out, key2).round_division(Rp) == m0
+    assert scheme.linear_decrypt(c_out, key2).round_division(Rp) == m0
 
 
 @pytest.mark.parametrize("scheme_fixture", ["bv", "ghs"])
@@ -428,7 +428,7 @@ def test_mlwe_multiplication_radix_rlk(scheme_fixture, request):
     c1 = enc(scheme, Rp, m1, key)
     c2 = enc(scheme, Rp, m2, key)
 
-    m_out = scheme.phase(c1 * c2, key).round_division(Rp)
+    m_out = scheme.linear_decrypt(c1 * c2, key).round_division(Rp)
     assert _mul_error(Rq, Rp, scheme, m_out, m1, m2) < 1000
 
 
@@ -444,14 +444,14 @@ def test_mgsw_external_product_radix(bv):
     assert ct_id.gadget_size == _radix_keys(mgsw_scheme.ring, RADIX_LOG_BASE)
 
     res = ct_id.external_product(ct1)
-    assert scheme.phase(res, key).round_division(Rp) == m1
+    assert scheme.linear_decrypt(res, key).round_division(Rp) == m1
 
 
 def test_keyswitch_radix_single_component():
     # One prime left in the ciphertext ring: each residue is the value itself,
     # so the gadget degenerates to the plain powers of 2^w. The level has no
     # room left to round noise away, so the key switch is measured directly --
-    # the phase it produces under the new key against the one it consumed.
+    # the linear decryption under the new key against the one it consumed.
     Rq = Ring(N, prime_size=[45, 45], split_degree=1)
     Rp = Rq.quotient_ring(ell=1)
     scheme = MLWE_Scheme(Rq, special_primes=0, max_lvl=2)
@@ -466,8 +466,8 @@ def test_keyswitch_radix_single_component():
         scheme.special_rings[c1.lvl], RADIX_LOG_BASE
     )
 
-    before = scheme.phase(c1, key)
-    after = scheme.phase(scheme.keyswitch(c1, ksk), key2)
+    before = scheme.linear_decrypt(c1, key)
+    after = scheme.linear_decrypt(scheme.keyswitch(c1, ksk), key2)
     before.to_coeff()
     after.to_coeff()
     err = (after - before).get_polynomial(signed=True)
@@ -492,7 +492,7 @@ def test_keyswitch_radix_at_a_level(ghs):
         scheme.special_rings[c1.lvl], RADIX_LOG_BASE
     )
     c_out = scheme.keyswitch(c1, ksk)
-    assert scheme.phase(c_out, key2).round_division(Rp) == m0
+    assert scheme.linear_decrypt(c_out, key2).round_division(Rp) == m0
 
 
 def test_round_division_moves_the_native_ring(ghs):
@@ -504,7 +504,7 @@ def test_round_division_moves_the_native_ring(ghs):
     m0 = Rp.random_element()
     c = enc(scheme, Rp, m0, key).round_division(lvl=1)
     assert ffi.cast("MLWE", c.obj).ring == scheme.rings[1].arith_ring
-    assert scheme.phase(c, key).round_division(Rp) == m0
+    assert scheme.linear_decrypt(c, key).round_division(Rp) == m0
 
 
 def test_derived_samples_keep_the_shape(ghs):
@@ -528,8 +528,9 @@ def test_derived_samples_keep_the_shape(ghs):
 
 
 def _log2_noise(scheme, out, c, gen, key):
-    """Bits of what the automorphism's key switch added to the phase."""
-    diff = scheme.phase(out, key) - scheme.phase(c, key).automorphism(gen)
+    """Bits of what the automorphism's key switch added to the linear decryption."""
+    expected = scheme.linear_decrypt(c, key).automorphism(gen)
+    diff = scheme.linear_decrypt(out, key) - expected
     return max(abs(x) for x in diff.get_polynomial(signed=True)).bit_length()
 
 
@@ -548,8 +549,8 @@ def _check_hoisted(scheme, Rp, key, m0, c, radix):
         # The RNS gadget without a special prime leaves about 2^52 of noise,
         # which a level's smaller modulus no longer absorbs, hoisted or not.
         expected = m0.automorphism(gen)
-        if scheme.phase(alone, key).round_division(Rp) == expected:
-            assert scheme.phase(out, key).round_division(Rp) == expected
+        if scheme.linear_decrypt(alone, key).round_division(Rp) == expected:
+            assert scheme.linear_decrypt(out, key).round_division(Rp) == expected
 
 
 @pytest.mark.parametrize("scheme_fixture", ["bv", "ghs"])
@@ -621,7 +622,7 @@ def test_automorphism_batch(ghs, n_threads):
     ksks = [None if g == 1 else scheme.gen_ksk_automorphism(key, key, g) for g in gens]
     outs = scheme.automorphism_batch(cts, gens, ksks, n_threads)
     for m, g, out in zip(ms, gens, outs, strict=True):
-        assert scheme.phase(out, key).round_division(Rp) == m.automorphism(g)
+        assert scheme.linear_decrypt(out, key).round_division(Rp) == m.automorphism(g)
     with pytest.raises(ValueError, match="no key"):
         scheme.automorphism_batch(cts[:1], [5], [None])
 
@@ -629,8 +630,8 @@ def test_automorphism_batch(ghs, n_threads):
 @pytest.mark.parametrize("n_threads", [1, 0])
 @pytest.mark.usefixtures("threads")
 def test_linear_combinations(bv, n_threads):
-    # Plaintext coefficients scale the phase exactly, so the combination of
-    # the phases is the phase of the combination.
+    # Plaintext coefficients scale the linear decryption exactly, so the
+    # combination of the decryptions is the decryption of the combination.
     _Rq, Rp, scheme = bv
     key = scheme.key_gen_sparse(N // 8, 3.2)
     ring = scheme.rings[0]
@@ -638,13 +639,13 @@ def test_linear_combinations(bv, n_threads):
     small = [Polynomial(ring).from_array(_ternary(N)) for _ in range(5)]
     rows = [[small[0], None, small[1]], [small[2], small[3], small[4]]]
     outs = scheme.linear_combinations(cts, rows, n_threads)
-    phases = [scheme.phase(c, key) for c in cts]
+    decryptions = [scheme.linear_decrypt(c, key) for c in cts]
     for row, out in zip(rows, outs, strict=True):
         expected = sum(
-            (p * ph for p, ph in zip(row, phases, strict=True) if p is not None),
+            (p * d for p, d in zip(row, decryptions, strict=True) if p is not None),
             start=Polynomial(ring).from_array([0] * N),
         )
-        assert scheme.phase(out, key) == expected
+        assert scheme.linear_decrypt(out, key) == expected
 
 
 def test_gen_ksk_rejects_a_radix_larger_than_the_primes(bv):
@@ -699,7 +700,7 @@ def test_keyswitch_over_a_populated_base(radix_log_base):
     c0 = enc(scheme, Rp, m0, key)
     for c in (c0, c0.round_division(lvl=1)):
         out = scheme.keyswitch(c, ksk)
-        assert scheme.phase(out, key2).round_division(Rp) == m0
+        assert scheme.linear_decrypt(out, key2).round_division(Rp) == m0
 
 
 @pytest.mark.parametrize("radix_log_base", [None, RADIX_LOG_BASE])
@@ -714,7 +715,7 @@ def test_multiplication_over_a_populated_base(radix_log_base):
     c1 = enc(scheme, Rp, m1, key)
     c2 = enc(scheme, Rp, m2, key)
 
-    m_out = scheme.phase(c1 * c2, key).round_division(Rp)
+    m_out = scheme.linear_decrypt(c1 * c2, key).round_division(Rp)
     assert _mul_error(Rq, Rp, scheme, m_out, m1, m2) < 1000
 
 
@@ -729,4 +730,4 @@ def test_mgsw_external_product_over_a_populated_base(radix_log_base):
 
     ct_id = mgsw_scheme.encrypt(Polynomial(Rp).from_array([1] + [0] * (N - 1)), key)
     res = ct_id.external_product(ct1)
-    assert scheme.phase(res, key).round_division(Rp) == m1
+    assert scheme.linear_decrypt(res, key).round_division(Rp) == m1

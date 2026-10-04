@@ -169,9 +169,9 @@ class GP25:
             out.copy_from(out_repacked)
 
     def get_noise(self, c: MLWE, b_prec: int, key: MLWE_Key):
-        phase = self.scheme.phase(c, key)
-        phase.to_coeff()
-        rns = phase.get_coeff_matrix()
+        decryption = self.scheme.linear_decrypt(c, key)
+        decryption.to_coeff()
+        rns = decryption.get_coeff_matrix()
         ell = self.ring.ell - self.scheme.special_primes
         primes = self.ring.primes[:ell]
         q = math.prod(primes)

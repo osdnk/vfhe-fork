@@ -623,14 +623,17 @@ class MLWE_Scheme:
         out.repr = repr.coeff
         return out
 
-    def phase(
+    def linear_decrypt(
         self,
         rlwe: MLWE,
         key: MLWE_Key,
         out: RNSPolynomial | None = None,
         ring: RNSRing | None = None,
     ):
-        """The phase of ``rlwe`` under ``key``, in the NTT domain.
+        """The linear part of decrypting ``rlwe`` under ``key``, in the NTT domain.
+
+        This is ``b - sum_i a_i * s_i``: the encoded message plus the noise,
+        before any rounding or decoding.
 
         With ``ring`` (a quotient of the ciphertext's ring), it is computed modulo
         that smaller modulus only.
@@ -647,15 +650,17 @@ class MLWE_Scheme:
         else:
             key_at_ring = key.at_ring(target)
         rlwe.to_NTT()
-        lib_rlwe.lib.mlwe_RNS_phase(out.as_element(), rlwe.obj, key_at_ring.obj)
+        lib_rlwe.lib.mlwe_RNS_linear_decrypt(
+            out.as_element(), rlwe.obj, key_at_ring.obj
+        )
         out.repr = repr.ntt
         return out
 
     def tensor_product(self, in1: MLWE, in2: MLWE) -> list[RNSPolynomial]:
         """Symmetric tensor product of the r+1 components of ``in1`` and ``in2``.
 
-        Since ``phase(c) = b - sum_i a_i * s_i``, the product of the two phases
-        is quadratic in the key::
+        Since ``linear_decrypt(c) = b - sum_i a_i * s_i``, the product of the two
+        linear decryptions is quadratic in the key::
 
             b1*b2 - sum_i (a1_i*b2 + b1*a2_i) * s_i + sum_{i<=j} q_ij * s_i*s_j
 

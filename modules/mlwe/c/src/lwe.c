@@ -189,7 +189,7 @@ LWE lwe_new_trivial_sample(uint64_t *m, uint64_t n, uint64_t mask, RNS_Base base
     return c;
 }
 
-void lwe_phase(uint64_t *out, LWE c, LWE_Key key)
+void lwe_linear_decrypt(uint64_t *out, LWE c, LWE_Key key)
 {
     assert(c->mask == key->mask && c->n == key->n);
     uint64_t *as = (uint64_t *)safe_aligned_malloc(sizeof(uint64_t) * key->n);

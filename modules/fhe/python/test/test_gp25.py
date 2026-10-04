@@ -58,8 +58,8 @@ def test_lwe_extraction():
 
     for idx in [0, 1, N // 2, N - 1]:
         lwe_sample = gp25.rlwe_extract_lwe(rlwe_sample, idx)
-        phase = lwe_sample.phase(lwe_key, recompose=True)
-        res = mod_switch(phase, Rq.q_l, Rp.primes[0])
+        decryption = lwe_sample.linear_decrypt(lwe_key, recompose=True)
+        res = mod_switch(decryption, Rq.q_l, Rp.primes[0])
         diff = (res - msg_coeffs[idx]) % Rp.primes[0]
         diff = min(diff, Rp.primes[0] - diff)
         assert diff < 1000
@@ -80,7 +80,7 @@ def test_packing_ksk():
         extracted.append(LWE(ring=Rq, m=[m_i % q for q in Rq.primes], key=lwe_key))
 
     out_repacked = gp25.packing_keyswitch(extracted, packing_key, 0)
-    out_coeffs = out_scheme.phase(out_repacked, output_key).get_polynomial()
+    out_coeffs = out_scheme.linear_decrypt(out_repacked, output_key).get_polynomial()
     for i in range(in_N):
         m_i = mod_switch(out_coeffs[i], Rq.q_l, 2000)
         diff = (m_i - (i * 137) % 2000) % 2000
@@ -121,8 +121,8 @@ def test_lwe_extraction_over_a_populated_base():
 
     for idx in [0, 1, N // 2, N - 1]:
         lwe_sample = gp25.rlwe_extract_lwe(rlwe_sample, idx)
-        phase = lwe_sample.phase(lwe_key, recompose=True)
-        res = mod_switch(phase, Rq.q_l, Rp.primes[0])
+        decryption = lwe_sample.linear_decrypt(lwe_key, recompose=True)
+        res = mod_switch(decryption, Rq.q_l, Rp.primes[0])
         diff = (res - msg_coeffs[idx]) % Rp.primes[0]
         assert min(diff, Rp.primes[0] - diff) < 1000
 
@@ -142,7 +142,7 @@ def test_packing_ksk_over_a_populated_base():
         extracted.append(LWE(ring=Rq, m=[m_i % q for q in Rq.primes], key=lwe_key))
 
     out_repacked = gp25.packing_keyswitch(extracted, packing_key, 0)
-    out_coeffs = out_scheme.phase(out_repacked, output_key).get_polynomial()
+    out_coeffs = out_scheme.linear_decrypt(out_repacked, output_key).get_polynomial()
     for i in range(N):
         m_i = mod_switch(out_coeffs[i], Rq.q_l, 2000)
         diff = (m_i - (i * 137) % 2000) % 2000
@@ -193,7 +193,9 @@ def test_sab(deterministic_prng, threads):
     gp25.sab_rlwe_bootstrap(out_bootstrap, rlwe_in, rlwe_tv, sab_key)
 
     out_coeffs = (
-        out_scheme.phase(out_bootstrap, output_key).round_division(Rp).get_polynomial()
+        out_scheme.linear_decrypt(out_bootstrap, output_key)
+        .round_division(Rp)
+        .get_polynomial()
     )
     for i in range(in_N):
         assert mod_switch(out_coeffs[i], Rp.q_l, 1 << msg_prec) == lut[poly_in[i]]

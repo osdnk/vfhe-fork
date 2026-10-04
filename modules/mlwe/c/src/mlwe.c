@@ -171,7 +171,7 @@ void mlwe_RNSc_sample(RNSc_MLWE out, RNS_MLWE_Key key, const ArithElement *m)
     arith_add(out->ring, &out->b, &out->b, m);
 }
 
-void mlwe_RNS_phase(ArithElement *out, RNS_MLWE in, RNS_MLWE_Key key)
+void mlwe_RNS_linear_decrypt(ArithElement *out, RNS_MLWE in, RNS_MLWE_Key key)
 {
     arith_mul(in->ring, out, &in->a[0], &key->s[0]);
     for (size_t i = 1; i < in->r; i++)
@@ -654,8 +654,9 @@ uint64_t mlwe_extended_rank(uint64_t r)
 
 void mlwe_tensor_product(ArithElement *out, RNS_MLWE in1, RNS_MLWE in2)
 {
-    // Symmetric tensor product of the two ciphertext vectors. With
-    // phase(c) = b - sum_i a_i * s_i, the product of the two phases is
+    // Symmetric tensor product of the two ciphertext vectors. With the linear
+    // decryption linear_decrypt(c) = b - sum_i a_i * s_i, the product of the
+    // two linear decryptions is
     //
     //   b1*b2 - sum_i (a1_i*b2 + b1*a2_i) * s_i + sum_{i<=j} q_ij * s_i*s_j,
     //   where q_ij = a1_i*a2_j + a1_j*a2_i (i < j) and q_ii = a1_i*a2_i,

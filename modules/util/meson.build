@@ -6,12 +6,13 @@ module = {
         'c/src/alloc.c',
         'c/src/build_info.c',
         'c/src/cpu_probe.c',
+        'c/src/parallel.c',
         'c/src/util.c',
     ),
     'includes': [include_directories('c/include')],
     'headers': files('c/include/engine.h', 'c/include/util.h'),
     'cdefs': files('python/cdef/engine.cdef'),
-    'c_tests': files('c/test/test_alloc.c', 'c/test/test_cpu_probe.c'),
+    'c_tests': files('c/test/test_alloc.c', 'c/test/test_cpu_probe.c', 'c/test/test_parallel.c'),
     'packages': ['dynamic_extensions', 'engine', 'info'],
     # The engine picker's probe, built from just these so asking "what can this
     # CPU run?" never loads an engine.

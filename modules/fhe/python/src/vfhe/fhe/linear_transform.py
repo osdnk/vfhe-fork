@@ -23,7 +23,6 @@ from __future__ import annotations
 import cmath
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -106,14 +105,15 @@ class CKKS_LinearTransform:
         self,
         ciphertext: CKKS_Ciphertext,
         ksks: Mapping[int, MLWE_Set | list[MLWE_Set]],
-        n_threads: int = 1,
+        n_threads: int = 0,
     ) -> CKKS_Ciphertext:
         """``A`` applied to the slots of ``ciphertext``, without rescaling.
 
         ``ksks[k]`` is the rotation key for ``k`` slots
         (`CKKS_Scheme.gen_rotation_key`), for every ``k`` in :attr:`rotations`.
-        The result's ``delta`` is the input's times ``scale``. ``n_threads``
-        parallelizes the rotations and the giant steps.
+        The result's ``delta`` is the input's times ``scale``. The rotations
+        and products run on up to ``n_threads`` threads (0: the library's
+        limit, `vfhe.engine.set_num_threads`).
         """
         scheme = self.scheme
         if ciphertext.lvl != self.lvl or ciphertext.ring != scheme.rings[self.lvl]:
@@ -127,33 +127,33 @@ class CKKS_LinearTransform:
         two_n = 2 * scheme.N
         b = self.baby_steps
 
-        babies = sorted({i for row in self.plaintexts.values() for i in row if i})
+        babies = sorted({i for row in self.plaintexts.values() for i in row})
         rotated = dict(
             zip(
-                babies,
+                [i for i in babies if i],
                 scheme.automorphisms(
                     ciphertext,
-                    [pow(5, i, two_n) for i in babies],
-                    [ksks[i] for i in babies],
-                    n_threads=n_threads,
+                    [pow(5, i, two_n) for i in babies if i],
+                    [ksks[i] for i in babies if i],
+                    n_threads,
                 ),
                 strict=True,
             )
         )
         rotated[0] = ciphertext
-        # The giant steps share these, and a product transforms its operands
-        # in place, so they are transformed before any step starts.
-        for c in rotated.values():
-            c.to_NTT()
-
-        def giant(j: int) -> CKKS_Ciphertext:
-            row = self.plaintexts[j]
-            inner = scheme.dot_plain(
-                [rotated[i] for i in row], list(row.values()), self.scale
-            )
-            return scheme.rotate(inner, j * b, ksks[j * b]) if j else inner
-
-        terms = _map_threaded(giant, sorted(self.plaintexts), n_threads)
+        giants = sorted(self.plaintexts)
+        inner = scheme.linear_combinations(
+            [rotated[i] for i in babies],
+            [[self.plaintexts[j].get(i) for i in babies] for j in giants],
+            self.scale,
+            n_threads,
+        )
+        terms = scheme.automorphism_batch(
+            inner,
+            [pow(5, j * b, two_n) for j in giants],
+            [ksks[j * b] if j else None for j in giants],
+            n_threads,
+        )
         out = terms[0]
         for term in terms[1:]:
             out += term
@@ -220,14 +220,6 @@ class CKKS_LinearTransform:
             scale=scale,
             baby_steps=baby_steps,
         )
-
-
-def _map_threaded(fn, items: list, n_threads: int) -> list:
-    # The native calls release the GIL, so threads parallelize the work in them.
-    if n_threads <= 1 or len(items) <= 1:
-        return [fn(x) for x in items]
-    with ThreadPoolExecutor(max_workers=min(n_threads, len(items))) as pool:
-        return list(pool.map(fn, items))
 
 
 def _chain(first, rest):

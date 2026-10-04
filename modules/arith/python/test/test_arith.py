@@ -190,6 +190,19 @@ def test_ntt_domain_automorphism_matches_the_coefficient_one(n, gen_of):
     )
 
 
+@pytest.mark.parametrize("gen", [5, 2 * N - 1])
+def test_automorphism_stays_in_the_ntt_domain(ring, gen):
+    a = ring.random_element(ntt=False)
+    in_coeff = a.automorphism(gen)
+    assert in_coeff.repr == repr.coeff
+    a.to_NTT()
+    in_ntt = a.automorphism(gen)
+    assert in_ntt.repr == repr.ntt and a.repr == repr.ntt
+    assert in_ntt.get_coeff_matrix(repr=repr.coeff) == in_coeff.get_coeff_matrix(
+        repr=repr.coeff
+    )
+
+
 def _brv(x, bits):
     return int(bin(x)[2:].rjust(bits, "0")[::-1], 2) if bits else 0
 

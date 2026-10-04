@@ -115,6 +115,9 @@ class ComplexRing:
         return [complex(i) for i in result]
 
 
+_BUILTIN_NUMBERS = frozenset((complex, float, int))
+
+
 class ComplexPolynomial:
     def __init__(self, ring: ComplexRing):
         self.ring = ring
@@ -155,8 +158,11 @@ class ComplexPolynomial:
         """Sets the first ``len(v)`` values; any ``numbers.Complex`` is accepted."""
         if len(v) > self.ring.N:
             raise ValueError(f"Expected at most {self.ring.N} values, got {len(v)}")
+        # The builtin types first: the ABC check costs several times as much.
         for val in v:
-            if not isinstance(val, numbers.Complex):
+            if type(val) not in _BUILTIN_NUMBERS and not isinstance(
+                val, numbers.Complex
+            ):
                 raise NotImplementedError(f"cannot assign a {type(val).__name__}")
         values = [complex(val) for val in v]
         n = len(values)

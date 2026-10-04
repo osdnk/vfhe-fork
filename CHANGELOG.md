@@ -116,6 +116,32 @@ versions may contain breaking changes.
   on portable. Natively, `mlwe_hoist` / `mlwe_automorphism_RNSc_GHS_hoisted`,
   and the automorphism on the NTT representation of a fully split ring,
   `polynomial_RNS_automorphism_index` / `polynomial_RNS_permute`.
+- `Polynomial.automorphism` of an NTT-domain element on a fully split ring
+  stays in the NTT domain (a reordering of the transform's points) instead of
+  converting the element to coefficients first.
+- Add `fhe.CKKS_LinearTransform`: a slot matrix, given by its diagonals and
+  acting on every block of `n` slots, encoded once for a level and applied by
+  baby-step giant-step with hoisted baby rotations; `rotations` lists the keys
+  it needs, and `apply` runs the rotations and products in parallel.
+  `slot_to_coeff` / `coeff_to_slot` build SlotToCoeff and its inverse, for
+  any `n` dividing `N/2`. Full-packing SlotToCoeff at N=2^13: 0.57 s on one
+  thread, 0.18 s on eight (avx512ifma).
+- Add `CKKS_Scheme.linear_combination(cts, coefficients, scale)` /
+  `MLWE_Scheme.linear_combination`: ciphertexts combined with plaintext
+  coefficients in one pass, and `linear_combinations(cts, rows)` for several
+  rows of coefficients at once; `MLWE_Scheme.automorphism_batch`, one
+  automorphism each on several ciphertexts; and `CKKS_Scheme.conjugate` /
+  `gen_conjugation_key`.
+- Add a library-wide limit on parallelism: `vfhe.engine.set_num_threads(n)` /
+  `num_threads()`, defaulting to `VFHE_NUM_THREADS` or else 1 (single
+  threaded), and kept across `dynamic_extensions` reloads. Every parallel operation
+  stays within it, and those taking `n_threads` (`automorphisms`,
+  `automorphism_batch`, `linear_combinations`, `CKKS_LinearTransform.apply`)
+  use all of it by default; gp25's `threads` is capped by it, so gp25 too is
+  single-threaded until the limit is raised. The threads are
+  native (`vfhe_parallel_for` in util), and a parallel operation started
+  inside another runs on its caller's thread. The complex-FFT batch, which
+  always used 8 threads, now follows the limit too.
 
 ### Changed
 

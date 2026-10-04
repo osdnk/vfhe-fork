@@ -16,12 +16,35 @@ class LibVFHE:
     def __init__(self) -> None:
         self.lib = lib
         self.ffi = ffi
-        self.multithreaded = False
-        self.num_threads = 1
 
 
 # Singleton instance
 libvfhe = LibVFHE()
+
+
+# What `set_num_threads` was last given (0: the default), kept here because a
+# library loaded by vfhe.dynamic_extensions starts with its own copy.
+_thread_limit = 0
+
+
+def set_num_threads(n: int | None = None) -> None:
+    """Limits the threads any vfhe operation uses to ``n``.
+
+    ``None`` restores the default: ``VFHE_NUM_THREADS`` if it is set, 1
+    otherwise, so vfhe is single-threaded unless asked. Operations taking ``n_threads`` use at most this
+    many whatever they ask for, and their default ``n_threads=0`` means this
+    many. The limit is kept across `vfhe.dynamic_extensions` reloads.
+    """
+    global _thread_limit
+    if n is not None and n < 1:
+        raise ValueError(f"the thread limit must be at least 1, got {n}")
+    _thread_limit = 0 if n is None else n
+    lib.vfhe_set_num_threads(_thread_limit)
+
+
+def num_threads() -> int:
+    """The library-wide thread limit (see `set_num_threads`)."""
+    return lib.vfhe_num_threads()
 
 
 def active_engine() -> str:

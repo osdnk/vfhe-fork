@@ -209,6 +209,44 @@ void mlwe_RNS_mul_subto_by_poly(RNS_MLWE out, RNS_MLWE in, const ArithElement *p
     arith_mul_subto(out->ring, &out->b, &in->b, poly);
 }
 
+void mlwe_RNS_linear_combination(RNS_MLWE out, RNS_MLWE *in, const ArithElement *coeff, uint64_t n)
+{
+    int started = 0;
+    for (uint64_t i = 0; i < n; i++)
+    {
+        if (coeff[i].handle == NULL)
+            continue;
+        if (started)
+            mlwe_RNS_mul_addto_by_poly(out, in[i], &coeff[i]);
+        else
+            mlwe_RNS_mul_by_poly(out, in[i], &coeff[i]);
+        started = 1;
+    }
+    if (!started)
+        mlwe_RNS_trivial_sample_of_zero(out);
+}
+
+typedef struct
+{
+    RNS_MLWE *out;
+    RNS_MLWE *in;
+    const ArithElement *coeff;
+    uint64_t n_in;
+} LinearCombinations;
+
+static void linear_combination_job(void *ctx, uint64_t j)
+{
+    LinearCombinations *lc = (LinearCombinations *)ctx;
+    mlwe_RNS_linear_combination(lc->out[j], lc->in, &lc->coeff[j * lc->n_in], lc->n_in);
+}
+
+void mlwe_RNS_linear_combinations(RNS_MLWE *out, RNS_MLWE *in, const ArithElement *coeff,
+                                  uint64_t n_out, uint64_t n_in, uint64_t n_threads)
+{
+    LinearCombinations lc = {out, in, coeff, n_in};
+    vfhe_parallel_for(n_out, n_threads, linear_combination_job, &lc);
+}
+
 RNSc_MLWE mlwe_new_RNSc_sample_of_zero(RNS_MLWE_Key key)
 {
     RNSc_MLWE res = mlwe_alloc_sample(key->ring, key->r);
@@ -335,6 +373,55 @@ int mlwe_automorphism_RNSc_GHS_hoisted(RNSc_MLWE out, MLWE_Hoisted h, uint64_t g
     mlwe_copy_RNSc_sample(out, acc);
     free_mlwe_RNS_sample(acc);
     return 0;
+}
+
+typedef struct
+{
+    RNSc_MLWE *out;
+    MLWE_Hoisted h;
+    RNSc_MLWE *in;
+    const uint64_t *gens;
+    RNS_MLWE_KS_Key *ksks;
+    uint64_t lvl;
+} AutomorphismJobs;
+
+static void hoisted_automorphism_job(void *ctx, uint64_t i)
+{
+    AutomorphismJobs *jobs = (AutomorphismJobs *)ctx;
+    mlwe_automorphism_RNSc_GHS_hoisted(jobs->out[i], jobs->h, jobs->gens[i], jobs->ksks[i],
+                                       jobs->lvl);
+}
+
+int mlwe_automorphisms_RNSc_GHS_hoisted(RNSc_MLWE *out, MLWE_Hoisted h, const uint64_t *gens,
+                                        RNS_MLWE_KS_Key *ksks, uint64_t n, uint64_t lvl,
+                                        uint64_t n_threads)
+{
+    for (uint64_t i = 0; i < n; i++)
+    {
+        if (!mlwe_hoisted_fits(h, ksks[i]))
+            return -1;
+    }
+    AutomorphismJobs jobs = {out, h, NULL, gens, ksks, lvl};
+    vfhe_parallel_for(n, n_threads, hoisted_automorphism_job, &jobs);
+    return 0;
+}
+
+static void automorphism_job(void *ctx, uint64_t i)
+{
+    AutomorphismJobs *jobs = (AutomorphismJobs *)ctx;
+    if (jobs->gens[i] == 1)
+        mlwe_copy_RNSc_sample(jobs->out[i], jobs->in[i]);
+    else
+        mlwe_automorphism_RNSc_GHS(jobs->out[i], jobs->in[i], jobs->gens[i], jobs->ksks[i],
+                                   jobs->lvl);
+}
+
+void mlwe_automorphism_RNSc_GHS_batch(RNSc_MLWE *out, RNSc_MLWE *in, const uint64_t *gens,
+                                      RNS_MLWE_KS_Key *ksks, uint64_t n, uint64_t lvl,
+                                      uint64_t n_threads)
+{
+    AutomorphismJobs jobs = {out, NULL, in, gens, ksks, lvl};
+    vfhe_parallel_for(n, n_threads, automorphism_job, &jobs);
 }
 
 void mlwe_partial_trace(RNSc_MLWE out, RNSc_MLWE in, uint64_t *gens, RNS_MLWE_KS_Key *ksks,

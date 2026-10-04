@@ -64,6 +64,7 @@ static inline int pthread_barrier_wait(pthread_barrier_t *barrier)
 #endif
 
 #include "mlwe.h"
+#include <util.h>
 
 void gp25_RGSW_monomial_mul(RNS_MLWE *p0, uint64_t in_N, RNS_MLWE **e, uint64_t r_prec,
                             RNS_MLWE_KS_Key ksk, uint64_t ell, uint64_t special_primes)
@@ -173,15 +174,11 @@ void gp25_RGSW_monomial_mul_mt(RNS_MLWE *p0, uint64_t in_N, RNS_MLWE **e, uint64
                                RNS_MLWE_KS_Key ksk, uint64_t ell, uint64_t special_primes,
                                uint64_t num_threads)
 {
+    num_threads = vfhe_threads_for(num_threads, in_N);
     if (num_threads <= 1)
     {
         gp25_RGSW_monomial_mul(p0, in_N, e, r_prec, ksk, ell, special_primes);
         return;
-    }
-
-    if (num_threads > in_N)
-    {
-        num_threads = in_N;
     }
 
     const uint64_t r = p0[0]->r;
@@ -299,10 +296,7 @@ static void *suba_worker(void *arg)
 void gp25_sub_a_mt(RNS_MLWE *p0, uint64_t in_N, uint64_t *a, RNS_MLWE *s_sign, uint64_t ell,
                    uint64_t special_primes, uint64_t N, uint64_t num_threads)
 {
-    if (num_threads > in_N)
-        num_threads = in_N;
-    if (num_threads < 1)
-        num_threads = 1;
+    num_threads = vfhe_threads_for(num_threads, in_N);
 
     if (num_threads == 1)
     {

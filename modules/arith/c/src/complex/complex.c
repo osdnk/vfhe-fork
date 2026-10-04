@@ -5,7 +5,6 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 
 #if VFHE_HAVE_AVX512F
 #include <immintrin.h>
@@ -490,56 +489,26 @@ typedef struct
 {
     void **rows_in;
     void **outs_rns;
-    uint64_t start, end;
     uint64_t n_complex;
     uint32_t log_prec;
     double **gs_ws;
     double temp_delta;
-} complex_batch_arg;
+} ComplexBatch;
 
-void *complex_batch_thread(void *arg)
+static void complex_batch_item(void *ctx, uint64_t i)
 {
-    complex_batch_arg *a = (complex_batch_arg *)arg;
-    const uint64_t n_complex = a->n_complex;
-    const double scale = a->temp_delta / (double)n_complex;
-    for (size_t i = a->start; i < a->end; i++)
-    {
-        double *row = (double *)a->rows_in[i];
-        bit_reverse_array(row, n_complex, a->log_prec);
-        GS_RN(row, a->gs_ws, n_complex);
-        complex_poly_scale_double(row, scale, n_complex);
-        complex_poly_round_to_RNS((RNS_Polynomial)a->outs_rns[i], row, n_complex);
-    }
-    return NULL;
+    ComplexBatch *a = (ComplexBatch *)ctx;
+    double *row = (double *)a->rows_in[i];
+    bit_reverse_array(row, a->n_complex, a->log_prec);
+    GS_RN(row, a->gs_ws, a->n_complex);
+    complex_poly_scale_double(row, a->temp_delta / (double)a->n_complex, a->n_complex);
+    complex_poly_round_to_RNS((RNS_Polynomial)a->outs_rns[i], row, a->n_complex);
 }
 
 void complex_polys_ifft_scale_round_to_RNS_batch(void **rows_in, void **outs_rns, uint64_t count,
                                                  uint64_t n_complex, uint32_t log_prec,
                                                  double **gs_ws, double temp_delta)
 {
-    enum
-    {
-        num_threads = 8
-    }; /* compile-time constant so the arrays aren't VLAs */
-    pthread_t threads[num_threads];
-    complex_batch_arg args[num_threads];
-    const uint64_t batch_size = (count + num_threads - 1) / num_threads;
-    for (size_t i = 0; i < num_threads; i++)
-    {
-        args[i].rows_in = rows_in;
-        args[i].outs_rns = outs_rns;
-        args[i].start = i * batch_size;
-        args[i].end = (i + 1) * batch_size < count ? (i + 1) * batch_size : count;
-        args[i].n_complex = n_complex;
-        args[i].log_prec = log_prec;
-        args[i].gs_ws = gs_ws;
-        args[i].temp_delta = temp_delta;
-        if (args[i].start < count)
-            pthread_create(&threads[i], NULL, complex_batch_thread, &args[i]);
-    }
-    for (size_t i = 0; i < num_threads; i++)
-    {
-        if (args[i].start < count)
-            pthread_join(threads[i], NULL);
-    }
+    ComplexBatch batch = {rows_in, outs_rns, n_complex, log_prec, gs_ws, temp_delta};
+    vfhe_parallel_for(count, 0, complex_batch_item, &batch);
 }

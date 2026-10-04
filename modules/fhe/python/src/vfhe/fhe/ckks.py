@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from vfhe.arith import (
     ComplexPolynomial,
@@ -14,6 +14,9 @@ from vfhe.arith import (
 )
 from vfhe.engine import ffi
 from vfhe.mlwe.mlwe import MLWE, MLWE_Key, MLWE_Scheme, MLWE_Set
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class CKKS_Scheme(MLWE_Scheme):
@@ -164,6 +167,36 @@ class CKKS_Scheme(MLWE_Scheme):
             self.scaling_factor if scale is None else scale
         )
         return prod
+
+    def linear_combination(
+        self,
+        cts: Sequence[CKKS_Ciphertext],
+        coefficients: Sequence[RNSPolynomial],
+        scale: float | None = None,
+    ) -> CKKS_Ciphertext:
+        """``sum_i coefficients[i] * cts[i]`` without rescaling, as the sum of
+        :meth:`multiply_plain` products would be: the ciphertexts share one
+        ``delta``, and the coefficients were all encoded at ``scale`` (default:
+        ``scaling_factor``)."""
+        return self.linear_combinations(cts, [coefficients], scale, n_threads=1)[0]
+
+    def linear_combinations(
+        self,
+        cts: Sequence[CKKS_Ciphertext],
+        rows: Sequence[Sequence[RNSPolynomial | None]],
+        scale: float | None = None,
+        n_threads: int = 0,
+    ) -> list[CKKS_Ciphertext]:
+        """:meth:`linear_combination` of ``cts`` with each row of coefficients,
+        on up to ``n_threads`` threads (0: the library's limit). A ``None``
+        coefficient drops its term."""
+        if any(c.delta != cts[0].delta for c in cts):
+            raise ValueError("the ciphertexts must share one scaling factor")
+        outs = super().linear_combinations(cts, rows, n_threads)
+        delta = cts[0].delta * (self.scaling_factor if scale is None else scale)
+        for out in outs:
+            out.delta = delta
+        return outs
 
     def conjugate(
         self, ciphertext: CKKS_Ciphertext, ksk: MLWE_Set | list[MLWE_Set]

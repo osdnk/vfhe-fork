@@ -427,6 +427,7 @@ class MLWE_Scheme:
         c: CtT,
         gens: Sequence[int],
         ksks: Sequence[MLWE_Set | list[MLWE_Set]],
+        n_threads: int = 0,
     ) -> list[CtT]:
         """Applies each of ``gens`` to ``c``, ``ksks[i]`` being the key for ``gens[i]``.
 
@@ -434,33 +435,136 @@ class MLWE_Scheme:
         but ``c`` is decomposed against the gadget once and every automorphism
         reuses it (hoisting), so each one costs only its key products. The keys
         must share a gadget and a ring, as automorphism keys for one level
-        generated together do.
+        generated together do. The automorphisms run on up to ``n_threads``
+        threads (0: the library's limit, `vfhe.engine.set_num_threads`).
         """
         if len(gens) != len(ksks):
             raise ValueError("expected one key per generator")
         if not gens:
             return []
+        self._check_generators(gens)
+        keys = [k if isinstance(k, MLWE_Set) else k[c.lvl] for k in ksks]
+        c.to_coeff()
+        outs = [c.new_like(lvl=c.lvl, ring=self.rings[c.lvl]) for _ in gens]
+        hoisted = lib_rlwe.lib.mlwe_hoist(c.obj, keys[0].obj)
+        try:
+            status = lib_rlwe.lib.mlwe_automorphisms_RNSc_GHS_hoisted(
+                ffi.new("void *[]", [out.obj for out in outs]),
+                hoisted,
+                ffi.new("uint64_t[]", list(gens)),
+                ffi.new("void *[]", [k.obj for k in keys]),
+                len(gens),
+                c.lvl,
+                n_threads,
+            )
+        finally:
+            lib_rlwe.lib.free_mlwe_hoisted(hoisted)
+        if status != 0:
+            raise ValueError(
+                "the keys do not share one gadget, ring and component layout"
+            )
+        for out in outs:
+            out.repr = repr.coeff
+        return outs
+
+    def automorphism_batch(
+        self,
+        cts: Sequence[CtT],
+        gens: Sequence[int],
+        ksks: Sequence[MLWE_Set | list[MLWE_Set] | None],
+        n_threads: int = 0,
+    ) -> list[CtT]:
+        """``[automorphism(cts[i], gens[i], ksks[i])]``, independently, on up to
+        ``n_threads`` threads (0: the library's limit). The ciphertexts share a
+        level; a generator of 1 copies, and its key may be ``None``."""
+        if not len(cts) == len(gens) == len(ksks):
+            raise ValueError("expected one generator and one key per ciphertext")
+        if not cts:
+            return []
+        lvl = cts[0].lvl
+        if any(c.lvl != lvl for c in cts):
+            raise ValueError("the ciphertexts must share a level")
+        self._check_generators(gens)
+        keys = []
+        for gen, k in zip(gens, ksks, strict=True):
+            if k is None and gen != 1:
+                raise ValueError(f"no key for generator {gen}")
+            keys.append(
+                ffi.NULL
+                if k is None
+                else (k if isinstance(k, MLWE_Set) else k[lvl]).obj
+            )
+        for c in cts:
+            c.to_coeff()
+        outs = [c.new_like(lvl=lvl, ring=self.rings[lvl]) for c in cts]
+        lib_rlwe.lib.mlwe_automorphism_RNSc_GHS_batch(
+            ffi.new("void *[]", [out.obj for out in outs]),
+            ffi.new("void *[]", [c.obj for c in cts]),
+            ffi.new("uint64_t[]", list(gens)),
+            ffi.new("void *[]", keys),
+            len(cts),
+            lvl,
+            n_threads,
+        )
+        for out in outs:
+            out.repr = repr.coeff
+        return outs
+
+    def _check_generators(self, gens: Sequence[int]) -> None:
         for gen in gens:
             if not (0 < gen < 2 * self.N and gen % 2 == 1):
                 raise ValueError(f"{gen} is not an odd generator below 2N")
-        keys = [k if isinstance(k, MLWE_Set) else k[c.lvl] for k in ksks]
-        c.to_coeff()
-        hoisted = lib_rlwe.lib.mlwe_hoist(c.obj, keys[0].obj)
-        try:
-            outs = []
-            for gen, ksk in zip(gens, keys, strict=True):
-                out = c.new_like(lvl=c.lvl, ring=self.rings[c.lvl])
-                status = lib_rlwe.lib.mlwe_automorphism_RNSc_GHS_hoisted(
-                    out.obj, hoisted, gen, ksk.obj, c.lvl
-                )
-                if status != 0:
-                    raise ValueError(
-                        "the keys do not share one gadget, ring and component layout"
-                    )
-                out.repr = repr.coeff
-                outs.append(out)
-        finally:
-            lib_rlwe.lib.free_mlwe_hoisted(hoisted)
+
+    def linear_combination(
+        self, cts: Sequence[CtT], coefficients: Sequence[RNSPolynomial]
+    ) -> CtT:
+        """``sum_i coefficients[i] * cts[i]``, with plaintext coefficients.
+
+        Accumulated in one pass, without a temporary per term. Every ciphertext
+        and coefficient must be over one ring; ``cts`` share their type, level
+        and rank. Operands not in the NTT domain are moved to it in place.
+        """
+        return self.linear_combinations(cts, [coefficients], n_threads=1)[0]
+
+    def linear_combinations(
+        self,
+        cts: Sequence[CtT],
+        rows: Sequence[Sequence[RNSPolynomial | None]],
+        n_threads: int = 0,
+    ) -> list[CtT]:
+        """:meth:`linear_combination` of ``cts`` with each row of coefficients
+        (a plaintext matrix times a vector of ciphertexts), on up to
+        ``n_threads`` threads (0: the library's limit). A ``None`` coefficient
+        drops its term."""
+        if not cts or not rows or any(len(row) != len(cts) for row in rows):
+            raise ValueError("expected one coefficient per ciphertext in every row")
+        ring = cts[0].ring
+        coefficients = [p for row in rows for p in row if p is not None]
+        if any(c.ring != ring or c.r != cts[0].r for c in cts) or any(
+            p.ring != ring for p in coefficients
+        ):
+            raise ValueError("every operand must be over one ring and rank")
+        for c in cts:
+            c.to_NTT()
+        for p in coefficients:
+            p.to_NTT()
+        outs = [cts[0].new_like() for _ in rows]
+        elements = ffi.new("ArithElement[]", len(rows) * len(cts))
+        for j, row in enumerate(rows):
+            for i, p in enumerate(row):
+                if p is not None:
+                    elements[j * len(cts) + i].handle = p.obj
+                    elements[j * len(cts) + i].domain = domain_of(p.repr)
+        lib_rlwe.lib.mlwe_RNS_linear_combinations(
+            ffi.new("void *[]", [out.obj for out in outs]),
+            ffi.new("void *[]", [c.obj for c in cts]),
+            elements,
+            len(rows),
+            len(cts),
+            n_threads,
+        )
+        for out in outs:
+            out.repr = repr.ntt
         return outs
 
     def trace(self, c: CtT, ksk: MLWE_Set | list[MLWE_Set]) -> CtT:

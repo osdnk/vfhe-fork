@@ -105,3 +105,11 @@ def reinit_rlwe(_new_ffi, _new_lib):
         mlwe_mod.lib_rlwe = LibMLWE()
     except ImportError:
         logger.debug("vfhe.mlwe not imported; skipping MLWE reinitialization")
+
+
+@register_reinitializer
+def reinit_thread_limit(_new_ffi, new_lib):
+    """Carry the library-wide thread limit into the new module's own copy."""
+    import vfhe.engine as engine
+
+    new_lib.vfhe_set_num_threads(engine._thread_limit)  # noqa: SLF001 - same module

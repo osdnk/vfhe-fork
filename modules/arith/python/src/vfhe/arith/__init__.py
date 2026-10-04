@@ -9,6 +9,9 @@ from .impl.mp.multiprecision import Multiprecision
 from .impl.pmf.ntt import PseudoMersenneNTT
 from .impl.pmf.pseudo_mersenne import PseudoMersenneElement, PseudoMersenneField
 from .impl.pmf.vector import PseudoMersenneVector
+
+# Registers the vfhe.io codecs.
+from .impl.rns import io as _io  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from .impl.rns.polynomial import (
     Representation,
     RNSPolynomial,

@@ -17,11 +17,6 @@
 
 #include <blake3.h>
 
-// Forward declaration of aes_prng (only used if AES-NI is available and not in portable build)
-#if VFHE_HAVE_AESNI
-void aes_prng(uint8_t *output, uint64_t outlen, const uint8_t *input, uint64_t inlen);
-#endif
-
 // --- Deterministic seed override (tests only) ----------------------------
 // Reproducible FHE-bootstrap tests need a fixed RNG. When a deterministic seed
 // is set (vfhe_prng_set_deterministic_seed), generate_rnd_seed yields a
@@ -94,7 +89,15 @@ void get_rnd_from_hash(uint64_t amount, uint8_t *pointer)
     generate_rnd_seed(rnd);
 
 #if VFHE_HAVE_AESNI
-    aes_prng(pointer, amount, (uint8_t *)rnd, 32);
+    // AES-128-CTR keyed by the fresh seed (expand.c).
+    const uint64_t blocks = amount / 16;
+    prng_aes128_ctr(pointer, blocks, 0, 0, (const uint8_t *)rnd);
+    if (amount % 16)
+    {
+        uint8_t tail[16];
+        prng_aes128_ctr(tail, 1, blocks, 0, (const uint8_t *)rnd);
+        memcpy(&pointer[16 * blocks], tail, amount % 16);
+    }
 #else
     // Default fallback is Blake3
     blake3_hasher hasher;

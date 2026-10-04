@@ -288,6 +288,15 @@ ArithStatus arith_sample_gaussian(ArithRing ring, ArithElement *out, double sigm
     return status;
 }
 
+ArithStatus arith_sample_uniform_seeded(ArithRing ring, ArithElement *out, const uint8_t *seed,
+                                        uint64_t seed_len, uint64_t stream)
+{
+    ArithStatus status =
+        ARITH_DISPATCH(ring, sample_uniform_seeded, ring, out, seed, seed_len, stream);
+    out->domain = arith_mul_domain(ring);
+    return status;
+}
+
 ArithStatus arith_from_int_array(ArithRing ring, ArithElement *out, const uint64_t *values,
                                  uint64_t count)
 {

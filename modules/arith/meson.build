@@ -35,6 +35,7 @@ module = {
         'c/src/pmf/pmf_ntt.c',
         'c/src/pmf/pmf_vector.c',
         'c/src/rns/arith_rns.c',
+        'c/src/rns/rns_io.c',
         'c/src/rns/rns_polynomial.c',
         'c/src/rns/rns_vector.c',
     ),

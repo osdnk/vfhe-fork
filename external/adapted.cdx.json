@@ -31,7 +31,7 @@
         }
       ],
       "pedigree": {
-        "notes": "src/rnd/aes_rng.c adapted near-verbatim into modules/crypto/c/src/aes_rng.c; NTT, modular-arithmetic and sampling routines adapted into larger files across modules/arith, modules/crypto and modules/util."
+        "notes": "src/rnd/aes_rng.c (AES-NI counter-mode PRNG) adapted into modules/crypto/c/src/expand.c; NTT, modular-arithmetic and sampling routines adapted into larger files across modules/arith, modules/crypto and modules/util."
       }
     },
     {

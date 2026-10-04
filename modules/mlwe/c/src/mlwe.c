@@ -123,6 +123,26 @@ void mlwe_RNS_sample_of_zero(RNS_MLWE out, RNS_MLWE_Key key)
     }
 }
 
+void mlwe_RNS_sample_of_zero_seeded(RNS_MLWE out, RNS_MLWE_Key key, const uint8_t *seed,
+                                    uint64_t seed_len)
+{
+    arith_sample_gaussian(out->ring, &out->b, key->sigma);
+    arith_to_mul(out->ring, &out->b);
+    for (size_t i = 0; i < out->r; i++)
+    {
+        arith_sample_uniform_seeded(out->ring, &out->a[i], seed, seed_len, i);
+        arith_mul_addto(out->ring, &out->b, &key->s[i], &out->a[i]);
+    }
+}
+
+void mlwe_RNSc_sample_seeded(RNSc_MLWE out, RNS_MLWE_Key key, const ArithElement *m,
+                             const uint8_t *seed, uint64_t seed_len)
+{
+    mlwe_RNS_sample_of_zero_seeded(out, key, seed, seed_len);
+    mlwe_RNS_to_RNSc(out, out);
+    arith_add(out->ring, &out->b, &out->b, m);
+}
+
 void mlwe_RNSc_sample_of_zero(RNSc_MLWE out, RNS_MLWE_Key key)
 {
     mlwe_RNS_sample_of_zero(out, key);

@@ -143,6 +143,10 @@ extern "C"
         // sampling group (ARITH_CAP_SAMPLING)
         ArithStatus (*sample_uniform)(ArithRing ring, ArithElement *out);
         ArithStatus (*sample_gaussian)(ArithRing ring, ArithElement *out, double sigma);
+        // Uniform, in the mul domain, as a pure function of the ring, `seed`
+        // and `stream`: the element can be stored as its seed.
+        ArithStatus (*sample_uniform_seeded)(ArithRing ring, ArithElement *out, const uint8_t *seed,
+                                             uint64_t seed_len, uint64_t stream);
         // Load `count` integers into an element -- the implementation-neutral
         // way in, since an integer array means the same thing to every
         // representation. The resulting domain is whichever one the
@@ -225,6 +229,8 @@ extern "C"
 
     ArithStatus arith_sample_uniform(ArithRing ring, ArithElement *out);
     ArithStatus arith_sample_gaussian(ArithRing ring, ArithElement *out, double sigma);
+    ArithStatus arith_sample_uniform_seeded(ArithRing ring, ArithElement *out, const uint8_t *seed,
+                                            uint64_t seed_len, uint64_t stream);
     ArithStatus arith_from_int_array(ArithRing ring, ArithElement *out, const uint64_t *values,
                                      uint64_t count);
 

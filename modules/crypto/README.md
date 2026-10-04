@@ -24,9 +24,11 @@ This is the library's only randomness: nothing else in the tree draws from
 `secrets`, `random`, or the OS directly. Use `entropy` where a value must be
 unguessable and `seeded` where it must be reproducible from a transcript.
 
-- `c/src/aes_rng.c`: an AES-NI (VAES where the engine has it) CTR keystream,
-  used in place of BLAKE3 where the CPU offers AES and the build is not
-  portable. Called by `prng.c`, never by a caller directly.
+- `c/src/expand.c`: AES-128 in counter mode (AES-NI/VAES, or table-based on
+  the portable engine), and the seed expander built on it:
+  `prng_expand_below` draws values below a bound from a public seed,
+  identically on every engine. `prng.c` also uses its AES-NI path to expand
+  the entropy stream where the CPU offers AES and the build is not portable.
 - `c/src/normal.c`: the Box-Muller draw, beside the bytes it consumes.
 
 `prng.c` also carries the deterministic-seed override a probabilistic test

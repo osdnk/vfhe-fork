@@ -29,6 +29,20 @@
 // proportional to the input count.
 #define HASH_BATCH_POINTERS 256
 
+uint64_t hash_stream_size(void) { return sizeof(blake3_hasher); }
+
+void hash_stream_init(void *state) { blake3_hasher_init((blake3_hasher *)state); }
+
+void hash_stream_update(void *state, const uint8_t *in, uint64_t len)
+{
+    blake3_hasher_update((blake3_hasher *)state, in, len);
+}
+
+void hash_stream_digest(const void *state, uint8_t out[32])
+{
+    blake3_hasher_finalize((const blake3_hasher *)state, out, BLAKE3_OUT_LEN);
+}
+
 bool hash_batch_fits(uint64_t len)
 {
     return len > 0 && len % BLAKE3_BLOCK_LEN == 0 && len <= BLAKE3_CHUNK_LEN;

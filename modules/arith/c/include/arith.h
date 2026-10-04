@@ -904,6 +904,39 @@ void ntt_free_precompute(uint64_t **ws, uint64_t **w_precon, uint64_t n);
        it is only ever compared against a digest computed in the same process.
        `out` is four 64-bit words. */
     void polynomial_RNS_get_hash(uint64_t *out, RNS_Polynomial p);
+
+    /* A uniform polynomial from a public seed, in the mul domain: the row of
+       prime q is values [0, N) of prng_expand_below, under the key
+       prng_expand_key derives from `seed` and the label (stream, q). Keyed by
+       prime value rather than base index, a row is the same in every process
+       and in every ring holding its prime. `stream` separates polynomials
+       drawn from one seed. */
+    void polynomial_RNS_expand_seeded(RNS_Polynomial out, const uint8_t *seed, uint64_t seed_len,
+                                      uint64_t stream);
+    /* Whether row `index` (a base index) of `p` equals that row of
+       polynomial_RNS_expand_seeded's output; `canonical` says `p` is in the
+       coefficient domain. Costs one row's expansion (and inverse transform). */
+    bool polynomial_RNS_matches_seeded(RNS_Polynomial p, bool canonical, uint64_t index,
+                                       const uint8_t *seed, uint64_t seed_len, uint64_t stream);
+
+    /* Rows as bytes. A row is N residues in the native layout (for
+       split_degree s > 1 the coefficient row interleaves: coefficient j at
+       (j % s) * (N / s) + j / s), encoded as either
+         words: little-endian words of 4 bytes if q <= 2^32, else 8 (set by
+                the prime, not by how the row is stored);
+         tight: residue k in bits [k*b, (k+1)*b), b the bit length of q - 1,
+                least significant first, in little-endian 64-bit words.
+       Rows are written back to back in the order of `rows` (base indices);
+       rns_row_bytes is the size of one. */
+    uint64_t rns_row_bytes(uint64_t q, uint64_t N, bool tight);
+    void polynomial_RNS_write_rows(uint8_t *out, RNS_Polynomial p, const uint64_t *rows,
+                                   uint64_t count, bool tight);
+    /* The inverse. Returns -1, or with `validate` the position in `rows` of
+       the first row holding a residue >= its prime (contents then
+       unspecified). Without `validate` such a residue goes undetected, and
+       the arithmetic on it is undefined. */
+    int64_t polynomial_RNS_read_rows(RNS_Polynomial p, const uint8_t *in, const uint64_t *rows,
+                                     uint64_t count, bool tight, bool validate);
     uint64_t *polynomial_RNS_get_hash_p(RNS_Polynomial p);
     RNS_Polynomial *polynomial_new_RNS_polynomial_array(uint64_t size, uint64_t N,
                                                         uint64_t rns_mask, RNS_Base base);

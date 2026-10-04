@@ -29,8 +29,8 @@ license.
 - MOSFHET  (FHE library)
   Upstream: https://github.com/antoniocgj/MOSFHET
   License:  Apache-2.0 (see upstream LICENSE).
-  Usage:    modules/crypto/c/src/aes_rng.c is a near-verbatim adaptation of its
-            AES-NI counter-mode PRNG. Beyond that, further routines
+  Usage:    the AES-NI counter-mode code in modules/crypto/c/src/expand.c is
+            adapted from its AES-NI PRNG. Beyond that, further routines
             (number-theoretic transform, modular arithmetic, and sampling
             helpers) were ported and adapted into larger files across
             modules/arith, modules/crypto and modules/util. Compiled into the

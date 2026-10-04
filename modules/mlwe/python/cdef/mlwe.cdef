@@ -66,6 +66,8 @@ void free_mlwe_RNS_sample(void *p);
 void free_mlwe_RNS_key(void *key);
 
 void mlwe_RNSc_sample(void *out, void *key, ArithElement *m);
+void mlwe_RNSc_sample_seeded(void *out, void *key, ArithElement *m, const uint8_t *seed,
+                             uint64_t seed_len);
 void mlwe_RNS_linear_decrypt(ArithElement *out, void *in, void *key);
 void mlwe_RNSc_to_RNS(void *out, void *in);
 void mlwe_RNS_to_RNSc(void *out, void *in);

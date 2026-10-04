@@ -130,6 +130,13 @@ extern "C"
     void mlwe_copy_RNS_sample(RNS_MLWE out, RNS_MLWE in);
     void mlwe_copy_RNSc_sample(RNSc_MLWE out, RNSc_MLWE in);
     void mlwe_RNSc_sample(RNSc_MLWE out, RNS_MLWE_Key key, const ArithElement *m);
+    // The same with the mask drawn from `seed`: component i of `a` is stream i
+    // (arith_sample_uniform_seeded), so the sample can be stored as its seed
+    // and `b`. Use a fresh seed per sample.
+    void mlwe_RNS_sample_of_zero_seeded(RNS_MLWE out, RNS_MLWE_Key key, const uint8_t *seed,
+                                        uint64_t seed_len);
+    void mlwe_RNSc_sample_seeded(RNSc_MLWE out, RNS_MLWE_Key key, const ArithElement *m,
+                                 const uint8_t *seed, uint64_t seed_len);
     void mlwe_scale_RNS_mlwe_RNS(RNS_MLWE c, const uint64_t *per_component);
     void mlwe_add_RNSc_sample(RNSc_MLWE out, RNSc_MLWE in1, RNSc_MLWE in2);
     void mlwe_add_RNS_sample(RNS_MLWE out, RNS_MLWE in1, RNS_MLWE in2);

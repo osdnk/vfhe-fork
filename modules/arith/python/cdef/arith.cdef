@@ -77,6 +77,7 @@ void polynomial_RNS_add_integer(void *out, void *in1, uint64_t in2);
 
 // --- automorphism / domain conversion ---
 void polynomial_RNSc_permute(void *out, void *in, uint64_t gen);
+void polynomial_RNSc_to_centered_doubles(double *out, void *in, double scale);
 void polynomial_RNS_automorphism_index(uint32_t *idx, uint64_t N, uint64_t gen);
 void polynomial_RNS_permute(void *out, void *in, const uint32_t *idx);
 void polynomial_RNSc_to_RNS(void *out, void *in);
@@ -109,6 +110,7 @@ void CT_NR(double *x, void *ws, uint64_t n);
 void GS_RN(double *x, void *ws, uint64_t n);
 void bit_reverse_array(double *v, uint64_t N, uint32_t prec);
 void complex_poly_scale_double(double *v, double scale, uint64_t N);
+void complex_poly_to_interleaved(double *out, const double *in, uint64_t N);
 void complex_poly_round_to_RNS(void *out, double *in, uint64_t N);
 void complex_polys_ifft_scale_round_to_RNS_batch(void **rows_in, void **outs_rns, uint64_t count,
                                                  uint64_t n_complex, uint32_t log_prec, void *gs_ws,

@@ -46,6 +46,32 @@ def test_encode_decode():
     assert all(abs(v - dv) < 1e-3 for v, dv in zip(values, dec, strict=False))
 
 
+@pytest.mark.parametrize("n", [1, 4, 32, N // 2])
+def test_sparse_encoding(n):
+    scheme = CKKS_Scheme(
+        Ring(N, 300, split_degree=1), scaling_factor=2**25, special_primes=1
+    )
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    values = rand_values(n)
+    pt = scheme.encode(values)
+    # Repeated slots are a polynomial in X^(N/2n): every other coefficient is 0.
+    step = N // (2 * n)
+    coeffs = pt.get_polynomial(signed=True)
+    assert all(c == 0 for k, c in enumerate(coeffs) if k % step)
+    assert all(
+        abs(v - d) < 1e-3
+        for v, d in zip(values, scheme.decode(pt, slots=n), strict=True)
+    )
+    full = scheme.decode(pt)
+    assert all(abs(full[i] - values[i % n]) < 1e-3 for i in range(N // 2))
+    dec = scheme.decode(scheme.decrypt(scheme.encrypt(pt, key), key), slots=n)
+    assert all(abs(v - d) < 0.05 for v, d in zip(values, dec, strict=True))
+    with pytest.raises(ValueError, match="dividing"):
+        scheme.encode(rand_values(3))
+    with pytest.raises(ValueError, match="slots must divide"):
+        scheme.decode(pt, slots=3)
+
+
 def test_encrypt_decrypt():
     scheme = CKKS_Scheme(
         Ring(N, 300, split_degree=1), scaling_factor=2**25, special_primes=1
@@ -581,3 +607,33 @@ def test_mod_reduce_drops_a_level_and_keeps_the_value(ntt):
     assert all(abs(e - d) < 1e-3 for e, d in zip(expected, dec, strict=True))
     with pytest.raises(ValueError, match="quotient"):
         cx.mod_reduce(lvl=0)
+
+
+def test_decrypt_drops_to_the_lowest_level_that_holds_the_message():
+    scheme, key = _product_scheme(3)
+    x, y = (_unit_values(N // 2) for _ in range(2))
+    cx, cy = (scheme.encrypt(scheme.encode(v), key) for v in (x, y))
+
+    # At the scheme's scale the last level holds the message.
+    pt = scheme.decrypt(cx, key)
+    assert pt.ring == scheme.rings[-1]
+    dec = scheme.decode(pt, cx.delta)
+    assert all(abs(a - d) < 1e-3 for a, d in zip(x, dec, strict=True))
+    full = scheme.decrypt(cx, key, drop=False)
+    assert full.ring == cx.ring
+
+    # An unrescaled product sits at delta^2: it needs more primes, and gets them.
+    product = scheme.multiply(cx, cy, scheme.rlk)
+    pt = scheme.decrypt(product, key)
+    assert pt.ring != scheme.rings[-1] and pt.ring.is_quotient_ring(product.ring)
+    dec = scheme.decode(pt, product.delta)
+    expected = [a * b for a, b in zip(x, y, strict=True)]
+    assert all(abs(e - d) < 1e-3 for e, d in zip(expected, dec, strict=True))
+
+    # A larger bound on the message keeps more primes.
+    assert scheme.decrypt(cx, key, message_bound=2.0**60).ring.ell > 1
+
+    # The key over the target ring is built once and kept.
+    assert key.at_ring(scheme.rings[-1]) is key.at_ring(scheme.rings[-1])
+    with pytest.raises(ValueError, match="quotient"):
+        scheme.phase(scheme.rescale(cx * cy), key, ring=scheme.rings[0])

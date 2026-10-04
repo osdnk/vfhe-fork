@@ -507,9 +507,11 @@ class RNSPolynomial(Polynomial):
         self.repr = in1.repr
 
     def automorphism(self, gen):
-        """``X -> X^gen``, returned in the NTT domain if ``self`` is in it and
-        the ring is fully split (where it only reorders the transform's
-        points), in the coefficient domain otherwise."""
+        """``X -> X^gen``.
+
+        Stays in the NTT domain when ``self`` is there and the ring is fully split
+        (a permutation of the evaluation points); otherwise returns coefficients.
+        """
         if gen >= self.ring.N * 2:
             raise ValueError("failed: gen >= self.ring.N * 2")
         res = Polynomial(self.ring)
@@ -622,7 +624,8 @@ class RNSPolynomial(Polynomial):
     def mod_reduce(
         self, ring: RNSRing | None = None, out: RNSPolynomial | None = None
     ) -> RNSPolynomial:
-        self.to_coeff()
+        # Primes are transformed independently, so dropping some is a row copy
+        # in either domain.
         if not (out is not None or ring is not None):
             raise ValueError("Must provide ring or out")
         if out is None:
@@ -632,7 +635,7 @@ class RNSPolynomial(Polynomial):
         if not (out_.ring.is_quotient_ring(self.ring)):
             raise ValueError("Not a quotient ring")
         self.ring.lib.polynomial_RNSc_mod_reduce(out_.obj, self.obj)
-        out_.repr = repr.coeff
+        out_.repr = self.repr
         return out_
 
     # floor division, in-place

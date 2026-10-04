@@ -134,6 +134,9 @@ versions may contain breaking changes.
   `gen_conjugation_key`.
 - Add `CKKS_Scheme.product(cts)`: the product of ciphertexts as a balanced
   tree, `ceil(log2(n))` levels deep.
+- `CKKS_Scheme.encode` takes any number of values dividing `N/2` and packs
+  fewer than `N/2` sparsely (repeated across the slots, so the plaintext is a
+  polynomial in `X^(N/2n)`); `decode(..., slots=n)` reads them back.
 - Add `MLWE.mod_reduce(ring | lvl)`: a ciphertext reduced into a smaller
   level in place, the value kept rather than divided -- CKKS's level drop.
 - Add a library-wide limit on parallelism: `vfhe.engine.set_num_threads(n)` /
@@ -149,6 +152,26 @@ versions may contain breaking changes.
 
 ### Changed
 
+- `CKKS_Scheme.decode` reconstructs the coefficients natively
+  (`polynomial_RNSc_to_centered_doubles`: mixed-radix digits in modular
+  arithmetic, read in floating point only at the end, so exact up to the
+  doubles' rounding for any value) instead of a Python big-integer CRT per
+  coefficient: 550 -> 5.2 ms at N=2^14 over 8 primes, the same values to the
+  bit. The values are handed to Python as C `double _Complex` pairs, which
+  builds the list ten times faster than per element. On avx512ifma the
+  conversion of a single-prime plaintext to doubles, and encode's rounding of
+  doubles to integers, use the AVX-512 conversions (0.37 -> 0.017 ms for the
+  former at N=2^16).
+- `CKKS_Scheme.decrypt` returns the plaintext over the fewest primes that
+  hold it -- the last level for a ciphertext at the scheme's scale, higher for
+  one at a larger `delta` -- computing the phase over those primes only, so
+  decrypting and decoding a level-0 ciphertext at N=2^16 over 9 primes takes
+  2.65 ms instead of 21.9. `message_bound=` sets the bound on the slots it
+  assumes; `drop=False` keeps every prime.
+- `MLWE_Scheme.phase` reuses a key over a wider ring instead of rebuilding it
+  for the ciphertext's ring, and takes `ring=` to compute the phase modulo a
+  quotient only; `MLWE_Key.at_ring(ring)` builds the key over another ring
+  once and keeps it. `Polynomial.mod_reduce` keeps the element's domain.
 - `dynamic_extensions` names a compiled module after the flags it was built
   with and the compiler that built it, version included, as well as its
   sources and the active engine. Existing caches are invalidated, which is the

@@ -303,10 +303,9 @@ static const ArithMethods RNS_NTT_METHODS = {
 // Rings are shared and never freed, the same contract the RNS base they borrow
 // already has: an element does not point at its ring (arith_* takes it as an
 // argument), but a structure built over one may hold it, and nothing can prove
-// the last such structure is gone. So every lookup of one (N, mask, base)
-// returns the same handle, and the table grows to hold every ring a process
-// uses. The lock covers the growth: a lookup must not scan a table that a
-// concurrent insertion is reallocating.
+// the last such structure is gone. Each (N, mask, base) therefore has one
+// handle for the life of the process. The table grows as needed, under a lock
+// so that no lookup scans it while it is reallocated.
 typedef struct
 {
     uint64_t N, mask;

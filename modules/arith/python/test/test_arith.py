@@ -203,6 +203,50 @@ def test_automorphism_stays_in_the_ntt_domain(ring, gen):
     )
 
 
+@pytest.mark.parametrize("n", [4, 16])
+@pytest.mark.parametrize("sizes", [[60], [28], [28, 50, 30, 45, 60], [60] * 12])
+def test_centered_doubles_match_the_exact_crt(sizes, n):
+    # One prime takes a vectorized path from 8 coefficients on (narrow and
+    # wide rows); more take Garner's.
+    Rq = Ring(n, prime_size=[40, *sizes], split_degree=1)
+    mask = 0
+    for idx in Rq.prime_indices[1:]:
+        mask |= 1 << idx
+    R = Rq.quotient_ring(mask=mask)
+    Q = math.prod(R.primes)
+    half = (Q - 1) // 2
+    values = [
+        rng.randrange(Q),  # anywhere modulo Q
+        rng.randrange(-(2**40), 2**40) % Q,  # small, of either sign
+        half,  # the largest positive value
+        half + 1,  # the most negative one
+        0,
+        Q - 1,
+        *(rng.randrange(Q) for _ in range(10)),
+    ][:n]
+    p = Polynomial(R).from_bigint_array(values)
+    p.to_coeff()
+    out = ffi.new("double[]", R.N)
+    R.lib.polynomial_RNSc_to_centered_doubles(out, p.obj, 0.5)
+    for k, v in enumerate(values):
+        centered = v - Q if v > half else v
+        assert out[k] == pytest.approx(centered / 2, rel=1e-14, abs=0)
+
+
+def test_encode_rounding_is_round_half_to_even():
+    # The native rounding (vectorized on avx512ifma) against Python's round.
+    cring = ComplexRing(32)
+    R = Ring(64, prime_size=[60, 60], split_degree=1)
+    values = [rng.uniform(-(2**50), 2**50) for _ in range(40)]
+    values += [k + 0.5 for k in range(-12, 12)]  # ties go to the even neighbour
+    cp = ComplexPolynomial(cring)
+    for i in range(32):
+        cp.obj[i] = values[i]
+        cp.obj[i + 32] = values[i + 32]
+    native = cp.round_to_RNS_cpp(R)
+    assert native.get_polynomial(signed=True) == [round(v) for v in values]
+
+
 def _brv(x, bits):
     return int(bin(x)[2:].rjust(bits, "0")[::-1], 2) if bits else 0
 

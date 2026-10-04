@@ -22,18 +22,18 @@ class LibVFHE:
 libvfhe = LibVFHE()
 
 
-# What `set_num_threads` was last given (0: the default), kept here because a
-# library loaded by vfhe.dynamic_extensions starts with its own copy.
+# The last value given to set_num_threads (0: the default), re-applied to
+# libraries loaded by vfhe.dynamic_extensions.
 _thread_limit = 0
 
 
 def set_num_threads(n: int | None = None) -> None:
-    """Limits the threads any vfhe operation uses to ``n``.
+    """Limits the threads any vfhe operation may use to ``n``.
 
-    ``None`` restores the default: ``VFHE_NUM_THREADS`` if it is set, 1
-    otherwise, so vfhe is single-threaded unless asked. Operations taking ``n_threads`` use at most this
-    many whatever they ask for, and their default ``n_threads=0`` means this
-    many. The limit is kept across `vfhe.dynamic_extensions` reloads.
+    ``None`` restores the default: ``VFHE_NUM_THREADS`` if set, otherwise 1, so
+    vfhe is single-threaded unless asked. Functions taking ``n_threads`` never
+    exceed the limit, and their default ``n_threads=0`` means "up to the
+    limit". The setting survives `vfhe.dynamic_extensions` reloads.
     """
     global _thread_limit
     if n is not None and n < 1:

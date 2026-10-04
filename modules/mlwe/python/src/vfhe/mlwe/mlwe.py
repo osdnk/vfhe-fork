@@ -43,6 +43,8 @@ class MLWE_Scheme:
     # to their own ciphertext class; operations that transform an existing
     # ciphertext use ``MLWE.new_like`` instead. Bound after MLWE is defined.
     ciphertext_type: type[MLWE]
+    #: Whether `sample` draws masks from fresh seeds by default (`MLWE.seed`).
+    seeded_encryption: bool = True
 
     def __init__(
         self,
@@ -605,6 +607,7 @@ class MLWE_Scheme:
         key: MLWE_Key,
         out: MLWE | None = None,
         lvl: int | None = None,
+        seeded: bool | None = None,
     ) -> MLWE:
         """Samples an MLWE ciphertext of the given message polynomial under the given key.
 
@@ -612,6 +615,8 @@ class MLWE_Scheme:
             msg: The message polynomial.
             key: The MLWE key.
             out: Optional MLWE object to store the result.
+            seeded: Expand the mask from a fresh 32-byte seed, kept as
+                `MLWE.seed` (default: `seeded_encryption`).
 
         Returns:
             The sampled MLWE ciphertext.
@@ -619,7 +624,15 @@ class MLWE_Scheme:
         if not out:
             out = self.ciphertext_type(self, lvl=lvl)
         msg.to_coeff()
-        lib_rlwe.lib.mlwe_RNSc_sample(out.obj, key.obj, msg.as_element())
+        if self.seeded_encryption if seeded is None else seeded:
+            seed = entropy.bytes(32)
+            lib_rlwe.lib.mlwe_RNSc_sample_seeded(
+                out.obj, key.obj, msg.as_element(), seed, len(seed)
+            )
+            out.seed = seed
+        else:
+            lib_rlwe.lib.mlwe_RNSc_sample(out.obj, key.obj, msg.as_element())
+            out.seed = None
         out.repr = repr.coeff
         return out
 
@@ -952,6 +965,11 @@ class MLWE_Set:
 
 
 class MLWE:
+    #: The seed the mask was drawn from (`MLWE_Scheme.sample`), or None. Kept
+    #: by copies only. An in-place change of the mask leaves it stale; writers
+    #: check it against the mask before relying on it.
+    seed: bytes | None = None
+
     def __init__(
         self,
         scheme: MLWE_Scheme,
@@ -1136,11 +1154,13 @@ class MLWE:
         res = self.new_like()
         lib_rlwe.lib.mlwe_copy_RNS_sample(res.obj, self.obj)
         res.repr = self.repr
+        res.seed = self.seed
         return res
 
     def copy_from(self, other: MLWE):
         lib_rlwe.lib.mlwe_copy_RNS_sample(self.obj, other.obj)
         self.repr = other.repr
+        self.seed = other.seed
 
     def round_division(  # noqa: PYI019 - Self needs 3.11
         self: CtT, ring: RNSRing | None = None, lvl: int | None = None

@@ -46,6 +46,8 @@ ArithStatus arith_rns_mul_by_monomial(ArithRing ring, ArithElement *out, const A
                                       uint64_t power, int minus_one);
 ArithStatus arith_rns_sample_uniform(ArithRing ring, ArithElement *out);
 ArithStatus arith_rns_sample_gaussian(ArithRing ring, ArithElement *out, double sigma);
+ArithStatus arith_rns_sample_uniform_seeded(ArithRing ring, ArithElement *out, const uint8_t *seed,
+                                            uint64_t seed_len, uint64_t stream);
 ArithStatus arith_rns_from_int_array(ArithRing ring, ArithElement *out, const uint64_t *values,
                                      uint64_t count);
 ArithStatus arith_rns_round_division(ArithRing ring, ArithElement *element, ArithRing to);

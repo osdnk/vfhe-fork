@@ -36,6 +36,15 @@ extern "C"
     // `out` must not overlap.
     void hash_batch(uint8_t *out, const uint8_t *in, uint64_t count, uint64_t len);
 
+    // Incremental BLAKE3 for callers that cannot embed the hasher type: the
+    // caller allocates hash_stream_size() bytes of state. hash_stream_digest
+    // writes the 32-byte digest of everything given so far and leaves the
+    // state usable.
+    uint64_t hash_stream_size(void);
+    void hash_stream_init(void *state);
+    void hash_stream_update(void *state, const uint8_t *in, uint64_t len);
+    void hash_stream_digest(const void *state, uint8_t out[32]);
+
     // --- Randomness (prng.c) ---------------------------------------------
 
     // Fills p[0..3] (32 bytes) with entropy from RDRAND where the build has it,
@@ -104,6 +113,40 @@ extern "C"
     // optimization: the two entry points cannot disagree.
     void prng_sample_below_from(uint64_t *out, uint64_t count, uint64_t start, uint64_t bound,
                                 const char *context, const uint8_t *seed, uint64_t seed_len);
+
+    // --- Seed expansion (expand.c) ---------------------------------------
+
+    // The key a seed expands under: the first 16 bytes of BLAKE3 in
+    // derive-key mode with `context`, over `seed` followed by each word of
+    // `label` as 8 little-endian bytes. `context` is a fixed string literal
+    // per use; `label` separates the streams drawn from one seed.
+    void prng_expand_key(uint8_t key[16], const char *context, const uint8_t *seed,
+                         uint64_t seed_len, const uint64_t *label, uint64_t label_len);
+
+    // Writes values [start, start + count) of the sequence below `bound` that
+    // `key` defines to out[0..count). Every engine computes the same sequence,
+    // and stored seeds rely on it never changing:
+    //
+    //   keystream block (j, t) = AES-128_key(LE64(j) || LE64(t))
+    //   w = 4 if bound <= 2^32 else 8;  m = the smallest 2^k - 1 >= bound - 1
+    //   value i = the first, over attempts t = 0, 1, ..., of
+    //             (the w-byte little-endian word at byte i*w of attempt t's
+    //              keystream) & m  that is below bound.
+    //
+    // Values are exactly uniform in [0, bound), and value i depends on i
+    // alone, so any window can be computed on its own. A rejected value costs
+    // one more block, which is rare when bound is close to a power of two.
+    // Uses AES-NI/VAES where the engine has them. Not constant time: the key
+    // is public. `bound` must be at least 1.
+    void prng_expand_below(uint64_t *out, uint64_t count, uint64_t start, uint64_t bound,
+                           const uint8_t key[16]);
+    // The same values at 32 bits, for `bound` <= 2^32.
+    void prng_expand_below32(uint32_t *out, uint64_t count, uint64_t start, uint64_t bound,
+                             const uint8_t key[16]);
+    // AES-128 in counter mode: keystream blocks first .. first + count - 1 of
+    // `attempt` under `key` (the blocks defined above), 16 bytes each.
+    void prng_aes128_ctr(uint8_t *out, uint64_t count, uint64_t first, uint64_t attempt,
+                         const uint8_t key[16]);
 
     // Test-only: makes every generator above reproducible by replacing the
     // hardware seed source with a splitmix64 stream started from `seed`. Also

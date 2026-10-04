@@ -101,6 +101,15 @@ void polynomial_RNS_copy_slot(void *out, uint64_t dst, void *in, uint64_t src);
 
 // --- hashing ---
 void polynomial_RNS_get_hash(uint64_t *out, void *p);
+void polynomial_RNS_expand_seeded(void *out, const uint8_t *seed, uint64_t seed_len,
+                                  uint64_t stream);
+bool polynomial_RNS_matches_seeded(void *p, bool canonical, uint64_t index, const uint8_t *seed,
+                                   uint64_t seed_len, uint64_t stream);
+uint64_t rns_row_bytes(uint64_t q, uint64_t N, bool tight);
+void polynomial_RNS_write_rows(uint8_t *out, void *p, const uint64_t *rows, uint64_t count,
+                               bool tight);
+int64_t polynomial_RNS_read_rows(void *p, const uint8_t *in, const uint64_t *rows, uint64_t count,
+                                 bool tight, bool validate);
 uint64_t *polynomial_RNS_get_hash_p(void *p);
 
 // --- complex (CKKS encoding) ---

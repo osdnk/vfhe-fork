@@ -209,6 +209,14 @@ ArithStatus arith_rns_sample_gaussian(ArithRing ring, ArithElement *out, double 
     return ARITH_OK;
 }
 
+ArithStatus arith_rns_sample_uniform_seeded(ArithRing ring, ArithElement *out, const uint8_t *seed,
+                                            uint64_t seed_len, uint64_t stream)
+{
+    (void)ring;
+    polynomial_RNS_expand_seeded(arith_rns_polynomial(out), seed, seed_len, stream);
+    return ARITH_OK;
+}
+
 // The integer polynomial is the implementation-neutral carrier; RNS reduces it
 // per prime on the way in.
 ArithStatus arith_rns_from_int_array(ArithRing ring, ArithElement *out, const uint64_t *values,
@@ -293,6 +301,7 @@ static const ArithMethods RNS_NTT_METHODS = {
     .mul_by_monomial = arith_rns_mul_by_monomial,
     .sample_uniform = arith_rns_sample_uniform,
     .sample_gaussian = arith_rns_sample_gaussian,
+    .sample_uniform_seeded = arith_rns_sample_uniform_seeded,
     .from_int_array = arith_rns_from_int_array,
     .round_division = arith_rns_round_division,
     .mod_reduce_lifted = arith_rns_mod_reduce_lifted,

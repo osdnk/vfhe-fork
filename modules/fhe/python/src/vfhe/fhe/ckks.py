@@ -46,80 +46,71 @@ class CKKS_Scheme(MLWE_Scheme):
 
     def encode(
         self,
-        values: list[complex | float],
+        values: Sequence[complex | float],
         *,
         ring: RNSRing | None = None,
         scale: float | None = None,
     ) -> RNSPolynomial:
-        """Encodes a list of complex/float values into a polynomial.
+        """Encodes complex values into a plaintext polynomial.
 
-        The polynomial lives in ``ring`` (default: level 0's ring), e.g. the
-        ring of a ciphertext further down the chain or a special ring, and the
-        values are multiplied by ``scale`` (default: ``scaling_factor``).
+        ``len(values)`` must divide ``N/2``; fewer values are repeated to fill the
+        slots (sparse packing), and ``decode(..., slots=len(values))`` reads them
+        back. ``ring`` is the plaintext's ring (default: level 0's) and ``scale``
+        multiplies the values (default: ``scaling_factor``).
         """
         ring = self.ring if ring is None else ring
         if ring.N != self.ring.N:
             raise ValueError(
                 f"Expected a ring of dimension {self.ring.N}, got {ring.N}"
             )
-        if not (len(values) == self.ring.N // 2):
-            raise ValueError(f"Expected {self.ring.N // 2} values, got {len(values)}")
-        # Create a ComplexPolynomial and populate it with values
+        slots = self.ring.N // 2
+        if not values or slots % len(values):
+            raise ValueError(
+                f"Expected a number of values dividing {slots}, got {len(values)}"
+            )
         c_poly = ComplexPolynomial(self.complex_ring)
-        c_poly.from_array(values)
-        # Transform to coefficient domain using IFFT
+        c_poly.from_array(list(values) * (slots // len(values)))
         c_poly.IFFT()
-        # Scale by the scaling factor
         c_poly *= self.scaling_factor if scale is None else scale
-        # Round and convert to RNS
         poly = c_poly.round_to_RNS_cpp(ring)
-
         # Restrict the RNS mask of the encoded polynomial to the primes of `ring`
         ffi.cast("RNS_Polynomial", poly.obj).rns_mask = ring.mask
-
         return poly
 
     def decode(
-        self, poly: RNSPolynomial, scaling_factor: float | None = None
+        self,
+        poly: RNSPolynomial,
+        scaling_factor: float | None = None,
+        *,
+        slots: int | None = None,
     ) -> list[complex]:
-        """Decodes a polynomial back into a list of complex values."""
+        """Decodes a plaintext polynomial into its slot values, divided by
+        ``scaling_factor`` (default: the scheme's).
+
+        Returns all ``N/2`` slots, or the first ``slots`` (a divisor of ``N/2``) of
+        a sparsely packed message. Exact over any number of primes, and cheapest
+        over few, which is how :meth:`decrypt` returns plaintexts.
+        """
         if scaling_factor is None:
             scaling_factor = self.scaling_factor
-
-        # Reconstruct the coefficients modulo the active RNS mask
-        mask = poly.rns_mask
+        N = poly.ring.N
+        half = N // 2
+        if slots is not None and (slots < 1 or half % slots):
+            raise ValueError(f"slots must divide {half}, got {slots}")
         poly.to_coeff()
-        rns = poly.get_coeff_matrix(repr=repr.coeff)
-
-        active_primes = []
-        active_res = []
-        for i, idx in enumerate(poly.ring.prime_indices):
-            if mask & (1 << idx):
-                active_primes.append(poly.ring.primes[i])
-                active_res.append(rns[i])
-
-        # Perform CRT reconstruction
-        from vfhe.arith.number_theory import crt
-
-        q_l = math.prod(active_primes)
-        coeffs = []
-        for j in range(poly.ring.N):
-            residues = [active_res[i][j] for i in range(len(active_primes))]
-            val = crt(residues, active_primes)
-            # Signed representation
-            if val >= q_l // 2:
-                val -= q_l
-            coeffs.append(float(val))
-
-        # Create a ComplexPolynomial and populate it with the coefficients
         c_poly = ComplexPolynomial(self.complex_ring)
-        n_half = poly.ring.N // 2
-        for i in range(n_half):
-            c_poly[i] = complex(coeffs[i], coeffs[i + n_half])
-        # Transform back to slot domain using FFT
+        # The scaled coefficients are already the complex polynomial's
+        # [real | imaginary] layout.
+        self.ring.lib.polynomial_RNSc_to_centered_doubles(
+            c_poly.obj, poly.obj, 1.0 / scaling_factor
+        )
         c_poly.FFT()
-        # Divide by the scaling factor to return values in C
-        return [val / scaling_factor for val in c_poly]
+        # As (real, imaginary) pairs, cffi builds the Python complex values.
+        pairs = ffi.new("double[]", N)
+        self.ring.lib.complex_poly_to_interleaved(pairs, c_poly.obj, half)
+        return ffi.unpack(
+            ffi.cast("double _Complex *", pairs), half if slots is None else slots
+        )
 
     def encrypt(self, message: RNSPolynomial, key: MLWE_Key) -> CKKS_Ciphertext:
         """Encrypts a plaintext polynomial message under the given MLWE key."""
@@ -127,9 +118,52 @@ class CKKS_Scheme(MLWE_Scheme):
         self.sample(message, key, out=out)
         return out
 
-    def decrypt(self, ciphertext: MLWE, key: MLWE_Key) -> RNSPolynomial:
-        """Decrypts a ciphertext into a polynomial (by calculating its phase)."""
-        return self.phase(ciphertext, key)
+    def decrypt(
+        self,
+        ciphertext: MLWE,
+        key: MLWE_Key,
+        *,
+        message_bound: float | None = None,
+        drop: bool = True,
+    ) -> RNSPolynomial:
+        """Decrypts a ciphertext into its plaintext polynomial.
+
+        To keep decoding cheap, the plaintext is returned over the fewest primes
+        that hold it: the lowest level (a quotient of the ciphertext's ring) whose
+        modulus exceeds ``2 * delta * message_bound``. ``message_bound`` bounds the
+        slots' magnitude; by default it is what the last level holds at the
+        scheme's scaling factor, so ordinary ciphertexts drop to the last level and
+        those with a larger ``delta`` (e.g. unrescaled products) stay higher.
+        ``drop=False`` keeps every prime.
+        """
+        if not drop:
+            return self.phase(ciphertext, key)
+        delta = getattr(ciphertext, "delta", self.scaling_factor)
+        target = self._decryption_ring(ciphertext.ring, delta, message_bound)
+        return self.phase(ciphertext, key, ring=target)
+
+    def _decryption_ring(
+        self, ring: RNSRing, delta: float, message_bound: float | None
+    ) -> RNSRing:
+        """The quotient of ``ring`` among the scheme's levels with the fewest primes
+        whose modulus holds a plaintext of size ``delta * message_bound``.
+        """
+        if message_bound is None:
+            # What the last level holds at the scheme's scale, one bit spare.
+            last_bits = math.log2(math.prod(self.rings[-1].primes))
+            bound_bits = last_bits - math.log2(self.scaling_factor) - 2
+        else:
+            bound_bits = math.log2(message_bound)
+        needed_bits = 1 + math.log2(delta) + bound_bits
+        best, best_ell = ring, ring.ell
+        for candidate in self.rings:
+            if (
+                candidate.ell < best_ell
+                and candidate.is_quotient_ring(ring)
+                and math.log2(math.prod(candidate.primes)) >= needed_bits
+            ):
+                best, best_ell = candidate, candidate.ell
+        return best
 
     def rotate(
         self, ciphertext: CKKS_Ciphertext, k: int, ksk: MLWE_Set | list[MLWE_Set]
@@ -157,10 +191,10 @@ class CKKS_Scheme(MLWE_Scheme):
     ) -> CKKS_Ciphertext:
         """Multiplies by a plaintext, without rescaling.
 
-        ``scale`` is the factor the plaintext was encoded at (default:
-        ``scaling_factor``; 1 for an unscaled one, such as a monomial). The
-        product's ``delta`` is the ciphertext's times ``scale``, so products
-        can be summed before a single :meth:`rescale`.
+        ``scale`` is the plaintext's encoding scale (default: ``scaling_factor``; 1
+        for an unscaled plaintext such as a monomial). The result's ``delta`` is the
+        ciphertext's times ``scale``, so several products can be summed before one
+        :meth:`rescale`.
         """
         prod = cast("CKKS_Ciphertext", MLWE.__mul__(ciphertext, plaintext))
         prod.delta = ciphertext.delta * (
@@ -174,10 +208,11 @@ class CKKS_Scheme(MLWE_Scheme):
         coefficients: Sequence[RNSPolynomial],
         scale: float | None = None,
     ) -> CKKS_Ciphertext:
-        """``sum_i coefficients[i] * cts[i]`` without rescaling, as the sum of
-        :meth:`multiply_plain` products would be: the ciphertexts share one
-        ``delta``, and the coefficients were all encoded at ``scale`` (default:
-        ``scaling_factor``)."""
+        """``sum_i coefficients[i] * cts[i]``, without rescaling.
+
+        The ciphertexts must share one ``delta``, and the coefficients must all be
+        encoded at ``scale`` (default: ``scaling_factor``).
+        """
         return self.linear_combinations(cts, [coefficients], scale, n_threads=1)[0]
 
     def linear_combinations(
@@ -187,9 +222,9 @@ class CKKS_Scheme(MLWE_Scheme):
         scale: float | None = None,
         n_threads: int = 0,
     ) -> list[CKKS_Ciphertext]:
-        """:meth:`linear_combination` of ``cts`` with each row of coefficients,
-        on up to ``n_threads`` threads (0: the library's limit). A ``None``
-        coefficient drops its term."""
+        """One :meth:`linear_combination` of ``cts`` per row of coefficients, on up to
+        ``n_threads`` threads (0: the library limit). ``None`` skips a term.
+        """
         if any(c.delta != cts[0].delta for c in cts):
             raise ValueError("the ciphertexts must share one scaling factor")
         outs = super().linear_combinations(cts, rows, n_threads)
@@ -234,10 +269,12 @@ class CKKS_Scheme(MLWE_Scheme):
     def rescale_batch(
         self, cts: Sequence[CKKS_Ciphertext], n_threads: int = 0
     ) -> list[CKKS_Ciphertext]:
-        """:meth:`rescale` of each of the distinct ``cts``, which share a level,
-        on up to ``n_threads`` threads (0: the library's limit). In place, like
-        :meth:`rescale`, except where the next level needs
-        :meth:`rational_rescale`, which returns new ciphertexts one by one."""
+        """:meth:`rescale` of each ciphertext (distinct, at one level), on up to
+        ``n_threads`` threads (0: the library limit).
+
+        In place like :meth:`rescale`, except on non-nested chains, where
+        :meth:`rational_rescale` returns new ciphertexts one at a time.
+        """
         if not cts:
             return []
         lvl = cts[0].lvl
@@ -260,8 +297,9 @@ class CKKS_Scheme(MLWE_Scheme):
         in2: MLWE,
         ksk: MLWE_Set | list[MLWE_Set] | None = None,
     ) -> CKKS_Ciphertext:
-        """:meth:`MLWE_Scheme.multiply`, not rescaled, with the product's
-        ``delta`` the product of the operands'."""
+        """:meth:`MLWE_Scheme.multiply` (not rescaled), with ``delta`` set to the
+        product of the operands'.
+        """
         out = super().multiply(in1, in2, ksk)
         out.delta = in1.delta * cast("CKKS_Ciphertext", in2).delta
         return out
@@ -274,7 +312,8 @@ class CKKS_Scheme(MLWE_Scheme):
         n_threads: int = 0,
     ) -> list[CKKS_Ciphertext]:
         """``lhs[i] * rhs[i]`` for every ``i``, relinearized with ``ksk`` but not
-        rescaled, on up to ``n_threads`` threads (0: the library's limit)."""
+        rescaled, on up to ``n_threads`` threads (0: the library limit).
+        """
         outs = super().multiply_batch(lhs, rhs, ksk, n_threads)
         for out, a, b in zip(outs, lhs, rhs, strict=True):
             out.delta = a.delta * cast("CKKS_Ciphertext", b).delta
@@ -283,16 +322,15 @@ class CKKS_Scheme(MLWE_Scheme):
     def product(
         self, cts: Sequence[CKKS_Ciphertext], n_threads: int = 0
     ) -> CKKS_Ciphertext:
-        """The product of ``cts``, multiplied as a balanced binary tree.
+        """The product of ``cts``, computed as a balanced binary tree.
 
-        The tree is ``ceil(log2(n))`` levels deep, each consuming one level of
-        the chain, instead of the ``n - 1`` a chain of products would. Every
-        product is relinearized with :attr:`rlk` and rescaled; at a tree level
-        with an odd count, the last factor moves down a level unmultiplied
-        (:meth:`MLWE.mod_reduce`, on a copy), which needs each level's ring to
-        be a quotient of the one above -- a power-of-two count does not. The
-        products of one tree level run on up to ``n_threads`` threads (0: the
-        library's limit, `vfhe.engine.set_num_threads`).
+        The tree is ``ceil(log2(n))`` multiplications deep, one level of the chain
+        each, instead of ``n - 1``. Each product is relinearized with :attr:`rlk`
+        and rescaled. When a tree level has an odd count, its last factor is carried
+        down a level unmultiplied (:meth:`MLWE.mod_reduce`, on a copy), which needs
+        nested levels unless ``n`` is a power of two. Each tree level's products run
+        on up to ``n_threads`` threads (0: the library limit, see
+        `vfhe.engine.set_num_threads`).
         """
         n = len(cts)
         if n == 0:

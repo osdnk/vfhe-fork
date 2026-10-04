@@ -106,9 +106,9 @@ void gadget_mul_subto_polynomial(RNS_MLWE out, RNS_MLWE *ksk, const ArithElement
     gadget_mul_accumulate(out, ksk, poly, 1, log_base);
 }
 
-// The digits are kept in the mul domain when the key's ring is fully split,
-// where an automorphism only reorders the transform's points; otherwise they
-// stay canonical and every product transforms its permuted copy.
+// Digits stay in the mul domain on a fully split ring, where an automorphism
+// just permutes them; otherwise they stay canonical, and each product
+// transforms its permuted copy.
 void gadget_decompose(GadgetDigits *out, RNS_MLWE *ksk, const ArithElement *poly, uint64_t log_base)
 {
     RNS_Polynomial source = arith_rns_polynomial(poly);

@@ -333,8 +333,7 @@ static int mlwe_hoisted_fits(MLWE_Hoisted h, RNS_MLWE_KS_Key ksk)
     return 1;
 }
 
-// The hybrid key switch of Aut_gen(in), as mlwe_automorphism_RNSc_GHS computes
-// it, with the decomposition taken from `h` instead of recomputed.
+// Like mlwe_automorphism_RNSc_GHS, but reusing the decomposition in `h`.
 int mlwe_automorphism_RNSc_GHS_hoisted(RNSc_MLWE out, MLWE_Hoisted h, uint64_t gen,
                                        RNS_MLWE_KS_Key ksk, uint64_t lvl)
 {
@@ -352,8 +351,8 @@ int mlwe_automorphism_RNSc_GHS_hoisted(RNSc_MLWE out, MLWE_Hoisted h, uint64_t g
     mlwe_RNS_to_RNSc(acc, acc);
     mlwe_round_division(acc, in->ring);
 
-    // The components that keep the target key, and b, as the key switch folds
-    // them in: after the rescale, in `in`'s ring.
+    // Add the pass-through components and b after the rescale, as the key
+    // switch does.
     ArithElement permuted;
     arith_new(in->ring, &permuted);
     size_t keep_idx = 0;

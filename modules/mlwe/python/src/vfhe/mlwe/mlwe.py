@@ -429,14 +429,14 @@ class MLWE_Scheme:
         ksks: Sequence[MLWE_Set | list[MLWE_Set]],
         n_threads: int = 0,
     ) -> list[CtT]:
-        """Applies each of ``gens`` to ``c``, ``ksks[i]`` being the key for ``gens[i]``.
+        """Applies each automorphism ``gens[i]`` to ``c``, with key ``ksks[i]``.
 
-        The same results as :meth:`automorphism` call by call, up to the noise,
-        but ``c`` is decomposed against the gadget once and every automorphism
-        reuses it (hoisting), so each one costs only its key products. The keys
-        must share a gadget and a ring, as automorphism keys for one level
-        generated together do. The automorphisms run on up to ``n_threads``
-        threads (0: the library's limit, `vfhe.engine.set_num_threads`).
+        Same results as :meth:`automorphism` per generator, up to noise, but ``c``
+        is decomposed once and the decomposition reused (hoisting), so each extra
+        automorphism only costs its key products. All keys must share a gadget and
+        a ring, as automorphism keys generated together for one level do. Runs on up
+        to ``n_threads`` threads (0: the library limit, see
+        `vfhe.engine.set_num_threads`).
         """
         if len(gens) != len(ksks):
             raise ValueError("expected one key per generator")
@@ -474,9 +474,12 @@ class MLWE_Scheme:
         ksks: Sequence[MLWE_Set | list[MLWE_Set] | None],
         n_threads: int = 0,
     ) -> list[CtT]:
-        """``[automorphism(cts[i], gens[i], ksks[i])]``, independently, on up to
-        ``n_threads`` threads (0: the library's limit). The ciphertexts share a
-        level; a generator of 1 copies, and its key may be ``None``."""
+        """``automorphism(cts[i], gens[i], ksks[i])`` for every ``i``, on up to
+        ``n_threads`` threads (0: the library limit).
+
+        The ciphertexts must share a level. A generator of 1 copies the ciphertext,
+        and its key may be ``None``.
+        """
         if not len(cts) == len(gens) == len(ksks):
             raise ValueError("expected one generator and one key per ciphertext")
         if not cts:
@@ -520,9 +523,9 @@ class MLWE_Scheme:
     ) -> CtT:
         """``sum_i coefficients[i] * cts[i]``, with plaintext coefficients.
 
-        Accumulated in one pass, without a temporary per term. Every ciphertext
-        and coefficient must be over one ring; ``cts`` share their type, level
-        and rank. Operands not in the NTT domain are moved to it in place.
+        Accumulated in one pass. All operands must be over one ring, and ``cts``
+        must share type, level and rank. Operands not in the NTT domain are
+        converted in place.
         """
         return self.linear_combinations(cts, [coefficients], n_threads=1)[0]
 
@@ -532,10 +535,10 @@ class MLWE_Scheme:
         rows: Sequence[Sequence[RNSPolynomial | None]],
         n_threads: int = 0,
     ) -> list[CtT]:
-        """:meth:`linear_combination` of ``cts`` with each row of coefficients
-        (a plaintext matrix times a vector of ciphertexts), on up to
-        ``n_threads`` threads (0: the library's limit). A ``None`` coefficient
-        drops its term."""
+        """One :meth:`linear_combination` of ``cts`` per row of coefficients (a
+        plaintext matrix times a vector of ciphertexts), on up to ``n_threads``
+        threads (0: the library limit). ``None`` skips a term.
+        """
         if not cts or not rows or any(len(row) != len(cts) for row in rows):
             raise ValueError("expected one coefficient per ciphertext in every row")
         ring = cts[0].ring
@@ -620,13 +623,29 @@ class MLWE_Scheme:
         out.repr = repr.coeff
         return out
 
-    def phase(self, rlwe: MLWE, key: MLWE_Key, out: RNSPolynomial | None = None):
+    def phase(
+        self,
+        rlwe: MLWE,
+        key: MLWE_Key,
+        out: RNSPolynomial | None = None,
+        ring: RNSRing | None = None,
+    ):
+        """The phase of ``rlwe`` under ``key``, in the NTT domain.
+
+        With ``ring`` (a quotient of the ciphertext's ring), it is computed modulo
+        that smaller modulus only.
+        """
+        target = rlwe.ring if ring is None else ring
+        if not target.is_quotient_ring(rlwe.ring):
+            raise ValueError("ring must be a quotient of the ciphertext's ring")
         if not out:
-            out = Polynomial(rlwe.ring)
-        if key.ring != rlwe.ring:
-            key_at_ring = MLWE_Key(key.key, key.sigma_err, self, ring=rlwe.ring)
-        else:
+            out = Polynomial(target)
+        # Products run over the primes both operands hold, so the key's primes
+        # select the target's; otherwise use the key over the target (cached).
+        if key.ring.mask & rlwe.ring.mask == target.mask:
             key_at_ring = key
+        else:
+            key_at_ring = key.at_ring(target)
         rlwe.to_NTT()
         lib_rlwe.lib.mlwe_RNS_phase(out.as_element(), rlwe.obj, key_at_ring.obj)
         out.repr = repr.ntt
@@ -728,9 +747,10 @@ class MLWE_Scheme:
         ksk: MLWE_Set | list[MLWE_Set] | None = None,
         n_threads: int = 0,
     ) -> list[CtT]:
-        """``[multiply(lhs[i], rhs[i], ksk)]``, on up to ``n_threads`` threads
-        (0: the library's limit, `vfhe.engine.set_num_threads`). All the
-        ciphertexts share one ring and level."""
+        """``multiply(lhs[i], rhs[i], ksk)`` for every ``i``, on up to ``n_threads``
+        threads (0: the library limit). All ciphertexts must share one ring and
+        level.
+        """
         if len(lhs) != len(rhs):
             raise ValueError("expected as many right operands as left ones")
         if not lhs:
@@ -762,9 +782,9 @@ class MLWE_Scheme:
     def round_division_batch(
         self, cts: Sequence[CtT], lvl: int, n_threads: int = 0
     ) -> list[CtT]:
-        """:meth:`MLWE.round_division` of each of the distinct ``cts`` into
-        level ``lvl``, in place, on up to ``n_threads`` threads (0: the
-        library's limit)."""
+        """:meth:`MLWE.round_division` of each (distinct) ciphertext to level ``lvl``,
+        in place, on up to ``n_threads`` threads (0: the library limit).
+        """
         if len({id(c) for c in cts}) != len(cts):
             raise ValueError("the ciphertexts must be distinct")
         ring = self.rings[lvl]
@@ -785,8 +805,9 @@ class MLWE_Scheme:
         return list(cts)
 
     def _to_ntt_batch(self, cts: Sequence[MLWE], n_threads: int) -> None:
-        """Moves the distinct ``cts`` not yet in the NTT domain there, in one
-        native call."""
+        """Moves the distinct ``cts`` not yet in the NTT domain there, in one native
+        call.
+        """
         pending = list({id(c): c for c in cts if c.repr != repr.ntt}.values())
         if pending:
             lib_rlwe.lib.mlwe_RNSc_to_RNS_batch(
@@ -852,6 +873,17 @@ class MLWE_Key:
     def __del__(self) -> None:
         if hasattr(self, "obj") and self.obj:
             lib_rlwe.lib.free_mlwe_RNS_key(self.obj)
+
+    def at_ring(self, ring: RNSRing) -> MLWE_Key:
+        """This key over ``ring``, built on first use and cached on the key."""
+        if ring.mask == self.ring.mask:
+            return self
+        cache = self.__dict__.setdefault("_at_ring", {})
+        if ring.mask not in cache:
+            cache[ring.mask] = MLWE_Key(
+                self.key, self.sigma_err, self.scheme, ring=ring
+            )
+        return cache[ring.mask]
 
     def extract_lwe_key(self) -> LWE_Key:
         from .lwe import LWE_Key
@@ -968,16 +1000,13 @@ class MLWE:
         ring: RNSRing | None = None,
         rank: int | None = None,
     ) -> CtT:
-        """Allocate an empty ciphertext of the same concrete type as ``self``.
+        """Allocates an empty ciphertext of the same concrete type as ``self``.
 
-        Operations that derive a new ciphertext from an existing one allocate it
-        through here, so a subclass (e.g. ``CKKS_Ciphertext``) keeps its type and
-        its extra metadata instead of decaying into a plain ``MLWE``.
-
-        With neither ``lvl`` nor ``ring`` the result has ``self``'s shape: its
-        ring (special primes included), level, rank and ``is_extended``.
-        Otherwise ``lvl`` defaults to ``self.lvl``, and ``ring`` and ``rank``
-        default as in :meth:`__init__`.
+        Operations that derive a ciphertext allocate it here, so a subclass (e.g.
+        ``CKKS_Ciphertext``) keeps its type and metadata. With neither ``lvl`` nor
+        ``ring``, the result has ``self``'s ring (special primes included), level,
+        rank and ``is_extended``; otherwise ``lvl`` defaults to ``self.lvl`` and
+        ``ring`` and ``rank`` default as in :meth:`__init__`.
         """
         same_shape = lvl is None and ring is None
         if same_shape:
@@ -1138,14 +1167,12 @@ class MLWE:
     def mod_reduce(  # noqa: PYI019 - Self needs 3.11
         self: CtT, ring: RNSRing | None = None, lvl: int | None = None
     ) -> CtT:
-        """Reduce the ciphertext into a smaller (quotient) ring, in place.
+        """Reduces the ciphertext into a smaller (quotient) ring, in place.
 
-        The primes the destination lacks are dropped and the value is kept,
-        not divided as :meth:`round_division` divides it: the phase is the
-        same small value modulo the smaller modulus. That is a level drop for
-        CKKS, whose plaintext does not depend on the modulus, and *not* for
-        BFV, whose scaling is the modulus. The destination is ``ring`` or the
-        level ``lvl`` (exactly one), and either domain is kept as it is.
+        Drops the primes the destination lacks without dividing the value, unlike
+        :meth:`round_division`: the CKKS level drop. Not valid for BFV, whose
+        scaling depends on the modulus. Give ``ring`` or ``lvl``; the domain is
+        kept.
         """
         if ring is None == lvl is None:
             raise ValueError("provide exactly one of ring or lvl")

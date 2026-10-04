@@ -6,13 +6,12 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 
-// 0 until first read or after a reset: the default is decided lazily, so the
-// environment is read when the library is first used rather than when it loads.
+// 0 until first read or after a reset: the default is resolved lazily, so the
+// environment is read on first use rather than at load.
 static atomic_uint_fast64_t thread_limit = 0;
 
-// Set on every thread while it runs loop bodies, the caller's included: a loop
-// started from inside a body runs on the thread it is called from instead of
-// multiplying the threads already running.
+// Set while a thread (the caller's included) runs loop bodies, so a loop
+// started inside a body runs serially instead of spawning more threads.
 static _Thread_local int inside_parallel_loop = 0;
 
 static uint64_t default_thread_limit(void)
@@ -59,8 +58,7 @@ typedef struct
     atomic_uint_fast64_t next;
 } ParallelLoop;
 
-// Items are handed out one at a time, so threads that draw cheap items keep
-// drawing while another finishes an expensive one.
+// Items are handed out one at a time, which balances uneven item costs.
 static void run_loop(ParallelLoop *loop)
 {
     inside_parallel_loop = 1;
@@ -93,8 +91,8 @@ void vfhe_parallel_for(uint64_t n, uint64_t n_threads, void (*body)(void *ctx, u
     ParallelLoop loop = {body, ctx, n, 0};
     pthread_t *helpers = (pthread_t *)safe_malloc((threads - 1) * sizeof(pthread_t));
     uint64_t started = 0;
-    // A thread that cannot be created only means fewer of them: the caller
-    // runs whatever the others do not take.
+    // If a thread cannot be created, the others (and the caller) pick up its
+    // share.
     while (started < threads - 1 &&
            pthread_create(&helpers[started], NULL, run_loop_thread, &loop) == 0)
         started++;

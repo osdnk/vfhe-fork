@@ -783,8 +783,8 @@ void ntt_free_precompute(uint64_t **ws, uint64_t **w_precon, uint64_t n);
     void pmf_vec_ntt_forward(PMFVector a, PMFNTTPlan plan);
     void pmf_vec_ntt_inverse(PMFVector a, PMFNTTPlan plan);
 
-    // complex polynomial. A polynomial is n doubles of real parts followed by n
-    // of imaginary ones, and a table is loaded from size = 2n roots.
+    // Complex polynomials: n real parts followed by n imaginary parts. Root
+    // tables are loaded from size = 2n roots.
     double **load_rous_CT(double *rous_real, double *rous_imag, uint64_t size);
     void CT_NR(double *x, double **ws, uint64_t n);
     double **load_rous_GS(double *rous_real, double *rous_imag, uint64_t size);
@@ -792,6 +792,9 @@ void ntt_free_precompute(uint64_t **ws, uint64_t **w_precon, uint64_t n);
     void bit_reverse_array(double *v, uint64_t N, uint32_t prec);
     void complex_poly_scale_double(double *v, double scale, uint64_t N);
     void complex_poly_round_to_RNS(RNS_Polynomial out, double *in, uint64_t N);
+    // Writes the N values as (real, imaginary) pairs, the layout of a C
+    // `double _Complex` array. `out` holds 2N doubles.
+    void complex_poly_to_interleaved(double *out, const double *in, uint64_t N);
     void complex_polys_ifft_scale_round_to_RNS_batch(void **rows_in, void **outs_rns,
                                                      uint64_t count, uint64_t n_complex,
                                                      uint32_t log_prec, double **gs_ws,
@@ -863,11 +866,15 @@ void ntt_free_precompute(uint64_t **ws, uint64_t **w_precon, uint64_t n);
     void polynomial_base_conversion_RNSc(RNSc_Polynomial out, RNSc_Polynomial in,
                                          RNS_BaseConversionParams params);
     void polynomial_RNSc_permute(RNSc_Polynomial out, RNSc_Polynomial in, uint64_t gen);
-    // The same automorphism on the NTT representation of a ring with
-    // split_degree 1, where it only reorders the transform's points: `idx`
-    // (N entries) is the order, filled for one `gen` (odd, below 2N) by
-    // polynomial_RNS_automorphism_index and reusable for every polynomial of
-    // that dimension. `out` and `in` are distinct and share a base.
+    // out[k] = scale * coefficient k as a centered integer modulo Q, the
+    // product of `in`'s primes; `in` must be canonical. Exact up to double
+    // rounding for any value; values beyond the double range become infinite.
+    void polynomial_RNSc_to_centered_doubles(double *out, RNSc_Polynomial in, double scale);
+    // The same automorphism on an NTT-domain polynomial of a ring with
+    // split_degree 1, where it permutes the evaluation points.
+    // polynomial_RNS_automorphism_index fills `idx` (N entries) for one `gen`
+    // (odd, below 2N); it serves every polynomial of that dimension. `out` and
+    // `in` must be distinct and share a base.
     void polynomial_RNS_automorphism_index(uint32_t *idx, uint64_t N, uint64_t gen);
     void polynomial_RNS_permute(RNS_Polynomial out, RNS_Polynomial in, const uint32_t *idx);
     void free_RNS_polynomial(void *p);

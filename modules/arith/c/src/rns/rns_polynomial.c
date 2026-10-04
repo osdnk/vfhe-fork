@@ -7,6 +7,9 @@
 
 // Row width, the row accessors and the per-row operation macros.
 #include "arith_internal.h"
+#if VFHE_HAVE_AVX512IFMA
+#include <immintrin.h>
+#endif
 
 // How the block product writes its destination.
 typedef enum
@@ -1381,9 +1384,8 @@ static uint64_t rns_index_bit_reverse(uint64_t x, uint64_t bits)
     return bits ? (uint64_t)(v >> (32 - bits)) : 0;
 }
 
-// Position p of the transform holds P(psi^(2 brv(p) + 1)), and the
-// automorphism sends P(X) to P(X^gen), so position p of the image is the
-// position holding the point raised to `gen`.
+// Position p holds P(psi^(2 brv(p) + 1)); P(X) -> P(X^gen) takes position p
+// to the position holding that point raised to `gen`.
 void polynomial_RNS_automorphism_index(uint32_t *idx, uint64_t N, uint64_t gen)
 {
     assert(gen < 2 * N && (gen & 1));
@@ -1413,6 +1415,139 @@ void polynomial_RNS_permute(RNS_Polynomial out, RNS_Polynomial in, const uint32_
         else
             rns_row_gather_wide(out->rows64[j], in->rows64[j], idx, N);
     }
+}
+
+// a * w mod q for a below 2^64 and w below q < 2^63, with wp = floor(w 2^64 / q).
+static inline uint64_t shoup_mul_mod(uint64_t a, uint64_t w, uint64_t wp, uint64_t q)
+{
+    const uint64_t hi = (uint64_t)(((unsigned __int128)a * wp) >> 64);
+    const uint64_t r = a * w - hi * q;
+    return r >= q ? r - q : r;
+}
+
+static inline uint64_t shoup_constant(uint64_t w, uint64_t q)
+{
+    return (uint64_t)(((unsigned __int128)w << 64) / q);
+}
+
+// Garner: the mixed-radix digits a_i < q_i, x = a_0 + a_1 q_0 + a_2 q_0 q_1 +
+// ..., of the value with residues x_i, as
+// a_i = (((x_i - a_0) q_0^-1 - a_1) q_1^-1 - ...) mod q_i.
+static void rns_mixed_radix_digits(uint64_t *a, const uint64_t *x, const uint64_t *q,
+                                   const uint64_t *one_p, const uint64_t *inv,
+                                   const uint64_t *inv_p, uint64_t L)
+{
+    for (uint64_t i = 0; i < L; i++)
+    {
+        uint64_t t = x[i];
+        for (uint64_t j = 0; j < i; j++)
+        {
+            const uint64_t aj = shoup_mul_mod(a[j], 1, one_p[i], q[i]);
+            t = t >= aj ? t - aj : t + q[i] - aj;
+            t = shoup_mul_mod(t, inv[j * L + i], inv_p[j * L + i], q[i]);
+        }
+        a[i] = t;
+    }
+}
+
+void polynomial_RNSc_to_centered_doubles(double *out, RNSc_Polynomial in, double scale)
+{
+    const uint64_t N = in->base->N;
+    uint64_t L = 0, idx[64];
+    for (size_t j = 0; j < in->base->l; j++)
+        if (in->rns_mask & (1ULL << j))
+            idx[L++] = j;
+
+    // One prime, the usual case after a level drop: the residue is the value.
+    if (L == 1)
+    {
+        const uint64_t q = in->base->mods[idx[0]]->q, half = (q - 1) / 2;
+        const int narrow = rns_row_is_narrow(in->base, idx[0]);
+        const uint32_t *row32 = in->rows32[idx[0]];
+        const uint64_t *row64 = in->rows64[idx[0]];
+        uint64_t k = 0;
+#if VFHE_HAVE_AVX512IFMA
+        // AVX-512DQ (on every IFMA CPU) converts 8 int64 to double at a time.
+        const __m512i qv = _mm512_set1_epi64((long long)q);
+        const __m512i hv = _mm512_set1_epi64((long long)half);
+        const __m512d sv = _mm512_set1_pd(scale);
+        for (; k + 8 <= N; k += 8)
+        {
+            __m512i x =
+                narrow ? _mm512_cvtepu32_epi64(_mm256_loadu_si256((const __m256i *)(row32 + k)))
+                       : _mm512_loadu_si512((const void *)(row64 + k));
+            x = _mm512_mask_sub_epi64(x, _mm512_cmpgt_epu64_mask(x, hv), x, qv);
+            _mm512_storeu_pd(out + k, _mm512_mul_pd(_mm512_cvtepi64_pd(x), sv));
+        }
+#endif
+        for (; k < N; k++)
+        {
+            const uint64_t x = narrow ? row32[k] : row64[k];
+            out[k] = (double)(x > half ? (int64_t)(x - q) : (int64_t)x) * scale;
+        }
+        return;
+    }
+
+    uint64_t *q = (uint64_t *)safe_malloc(L * sizeof(uint64_t));
+    uint64_t *one_p = (uint64_t *)safe_malloc(L * sizeof(uint64_t));
+    uint64_t *inv = (uint64_t *)safe_malloc(L * L * sizeof(uint64_t));
+    uint64_t *inv_p = (uint64_t *)safe_malloc(L * L * sizeof(uint64_t));
+    uint64_t *residues = (uint64_t *)safe_aligned_malloc(L * N * sizeof(uint64_t));
+    uint64_t *x = (uint64_t *)safe_malloc(L * sizeof(uint64_t));
+    uint64_t *a = (uint64_t *)safe_malloc(L * sizeof(uint64_t));
+    uint64_t *half = (uint64_t *)safe_malloc(L * sizeof(uint64_t));
+    for (uint64_t i = 0; i < L; i++)
+    {
+        q[i] = in->base->mods[idx[i]]->q;
+        one_p[i] = shoup_constant(1, q[i]);
+        for (uint64_t j = 0; j < i; j++)
+        {
+            inv[j * L + i] = inverse_mod(q[j] % q[i], q[i]);
+            inv_p[j * L + i] = shoup_constant(inv[j * L + i], q[i]);
+        }
+        // Widen each row to 64 bits once, so the loop below has one type.
+        if (rns_row_is_narrow(in->base, idx[i]))
+            for (uint64_t k = 0; k < N; k++)
+                residues[i * N + k] = in->rows32[idx[i]][k];
+        else
+            memcpy(&residues[i * N], in->rows64[idx[i]], N * sizeof(uint64_t));
+    }
+    // (Q - 1) / 2 is (q_i - 1) / 2 modulo each q_i; values above it are
+    // negative.
+    for (uint64_t i = 0; i < L; i++)
+        x[i] = (q[i] - 1) / 2;
+    rns_mixed_radix_digits(half, x, q, one_p, inv, inv_p, L);
+
+    for (uint64_t k = 0; k < N; k++)
+    {
+        for (uint64_t i = 0; i < L; i++)
+            x[i] = residues[i * N + k];
+        rns_mixed_radix_digits(a, x, q, one_p, inv, inv_p, L);
+        int negative = 0;
+        for (uint64_t i = L; i-- > 0;)
+        {
+            if (a[i] != half[i])
+            {
+                negative = a[i] > half[i];
+                break;
+            }
+        }
+        // A negative value is -((Q - 1 - x) + 1); Q - 1 has digits q_i - 1, so
+        // no borrows. Evaluating non-negative digits from the top keeps the
+        // error relative to the value, not to Q.
+        double v = 0.0;
+        for (uint64_t i = L; i-- > 0;)
+            v = v * (double)q[i] + (double)(negative ? q[i] - 1 - a[i] : a[i]);
+        out[k] = (negative ? -(v + 1.0) : v) * scale;
+    }
+    free(q);
+    free(one_p);
+    free(inv);
+    free(inv_p);
+    free(residues);
+    free(x);
+    free(a);
+    free(half);
 }
 
 void polynomial_int_permute_mod_Q(IntPolynomial out, IntPolynomial in, uint64_t gen)

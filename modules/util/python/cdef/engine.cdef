@@ -11,6 +11,6 @@ const char *vfhe_engine_active(void);
 // the last level of cache before memory, or 0 where this build cannot tell.
 uint64_t vfhe_cpu_last_level_cache_bytes(void);
 
-// The library-wide limit on the threads any operation uses (util.h).
+// The library-wide thread limit (see util.h).
 uint64_t vfhe_num_threads(void);
 void vfhe_set_num_threads(uint64_t n);

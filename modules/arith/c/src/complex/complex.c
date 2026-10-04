@@ -36,12 +36,30 @@ void bit_reverse_array(double *v, uint64_t N, uint32_t prec)
     free(tmp);
 }
 
+void complex_poly_to_interleaved(double *out, const double *in, uint64_t N)
+{
+    for (size_t i = 0; i < N; i++)
+    {
+        out[2 * i] = in[i];
+        out[2 * i + 1] = in[i + N];
+    }
+}
+
 void complex_poly_round_to_RNS(RNS_Polynomial out, double *in, uint64_t N)
 {
     (void)N;
     const uint64_t n = out->base->N;
     uint64_t *tmp = (uint64_t *)safe_aligned_malloc(sizeof(uint64_t) * n);
-    for (size_t i = 0; i < n; i++)
+    size_t i = 0;
+#if VFHE_HAVE_AVX512IFMA
+    // AVX-512DQ (on every IFMA CPU) rounds 8 doubles at a time, to nearest
+    // even like llrint.
+    for (; i + 8 <= n; i += 8)
+        _mm512_storeu_si512((void *)(tmp + i), _mm512_cvt_roundpd_epi64(_mm512_loadu_pd(in + i),
+                                                                        _MM_FROUND_TO_NEAREST_INT |
+                                                                            _MM_FROUND_NO_EXC));
+#endif
+    for (; i < n; i++)
     {
         const int64_t r = (int64_t)llrint(in[i]);
         tmp[i] = (uint64_t)r;
@@ -50,9 +68,9 @@ void complex_poly_round_to_RNS(RNS_Polynomial out, double *in, uint64_t N)
     free(tmp);
 }
 
-// The scalar transforms, compiled into every engine: they are the whole
-// implementation without AVX-512, and the vectorized one's below its minimum
-// length. Their tables are the roots as given, real and imaginary halves.
+// Scalar transforms, built into every engine: the whole implementation
+// without AVX-512, and the fallback for short lengths with it. Their tables
+// hold the roots as given, real and imaginary parts apart.
 
 // c = a*b
 #define COMPLEX_MULT_SCALAR(c_real, c_imag, a_real, a_imag, b_real, b_imag)                        \
@@ -154,10 +172,9 @@ void GS_RN(double *x, double **ws, uint64_t n) { GS_RN_scalar(x, ws, n); }
 #endif
 
 #if VFHE_HAVE_AVX512F
-// The transform length below which the vectorized code cannot run: a vector
-// holds 8 real or 8 imaginary parts, its last three stages permute within one,
-// and its tables have log2(size) - 3 broadcast levels. Shorter transforms, and
-// their tables (whose `size` is twice the length), take the scalar bodies.
+// Shortest transform the AVX-512 code handles (a vector holds 8 real or 8
+// imaginary parts). Shorter transforms, and their tables (`size` = twice the
+// length), use the scalar code.
 #define COMPLEX_MIN_VECTOR_LEN 8
 
 // c = a*b

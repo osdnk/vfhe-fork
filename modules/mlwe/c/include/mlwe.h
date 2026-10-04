@@ -138,16 +138,14 @@ extern "C"
     void mlwe_RNSc_mul_by_xai_minus1(RNSc_MLWE out, RNSc_MLWE in, uint64_t a);
     void mlwe_RNS_mul_addto_by_poly(RNS_MLWE out, RNS_MLWE in, const ArithElement *poly);
     void mlwe_RNS_mul_subto_by_poly(RNS_MLWE out, RNS_MLWE in, const ArithElement *poly);
-    // The linear combination out = sum_i coeff[i] * in[i] of samples with
-    // plaintext coefficients, all in the mul domain over out's ring and rank,
-    // `out` distinct from every in[i]. A NULL coeff[i].handle drops the term,
-    // and no terms at all leave out = 0.
+    // out = sum_i coeff[i] * in[i], with plaintext coefficients, all in the mul
+    // domain over out's ring and rank; `out` must not alias any in[i]. A NULL
+    // coeff[i].handle skips that term; with no terms, out = 0.
     void mlwe_RNS_linear_combination(RNS_MLWE out, RNS_MLWE *in, const ArithElement *coeff,
                                      uint64_t n);
-    // out[j] = sum_i coeff[j * n_in + i] * in[i] for every j < n_out: several
-    // linear combinations of the same samples (a plaintext matrix times a
-    // vector of samples), on up to `n_threads` threads (0: the library's
-    // limit; see vfhe_threads_for).
+    // out[j] = sum_i coeff[j * n_in + i] * in[i] for j < n_out: a plaintext
+    // matrix times a vector of samples. Up to `n_threads` threads (0: the
+    // library limit, see vfhe_threads_for).
     void mlwe_RNS_linear_combinations(RNS_MLWE *out, RNS_MLWE *in, const ArithElement *coeff,
                                       uint64_t n_out, uint64_t n_in, uint64_t n_threads);
     void mlwe_automorphism_RNSc_GHS(RNSc_MLWE out, RNSc_MLWE in, uint64_t gen, RNS_MLWE_KS_Key ksk,
@@ -172,10 +170,9 @@ extern "C"
     uint64_t mlwe_extended_rank(uint64_t r);
     void mlwe_tensor_product(ArithElement *out, RNS_MLWE in1, RNS_MLWE in2);
     void mlwe_multiply(RNS_MLWE out, RNS_MLWE in1, RNS_MLWE in2, RNS_MLWE_KS_Key ksk);
-    // out[i] = in1[i] * in2[i] for every i < n, as mlwe_multiply with the one
-    // `ksk` (NULL: extended products), on up to `n_threads` threads (0: the
-    // library's limit). The inputs are in the mul domain; an input may appear
-    // in several products.
+    // out[i] = in1[i] * in2[i] for i < n, as mlwe_multiply with `ksk` (NULL:
+    // extended products). Inputs must be in the mul domain and may repeat. Up
+    // to `n_threads` threads (0: the library limit).
     void mlwe_multiply_batch(RNS_MLWE *out, RNS_MLWE *in1, RNS_MLWE *in2, RNS_MLWE_KS_Key ksk,
                              uint64_t n, uint64_t n_threads);
 
@@ -193,29 +190,27 @@ extern "C"
     void free_mlwe_RNS_ks_key(RNS_MLWE_KS_Key key);
     void mlwe_RNSc_GHS_hybrid_keyswitch(RNSc_MLWE out, RNSc_MLWE in, RNS_MLWE_KS_Key ksk,
                                         uint64_t lvl);
-    // Several automorphisms of one sample, key-switched with the input's
-    // decomposition computed once (hoisting): `mlwe_hoist` copies `in` and
-    // decomposes it against the gadget and ring of `ksk`; each
-    // mlwe_automorphism_RNSc_GHS_hoisted then costs the key products alone,
-    // and agrees with mlwe_automorphism_RNSc_GHS up to the noise. Any key with
-    // that gadget, ring and pass-through pattern serves -- automorphism keys
-    // for one level generated together all do -- and a key that does not is
-    // refused with -1, leaving `out` untouched. The hoisted sample is read
-    // only, so threads may share it.
+    // Hoisted automorphisms: several automorphisms of one sample, decomposing
+    // it only once. mlwe_hoist copies `in` and decomposes it for the gadget
+    // and ring of `ksk`; each mlwe_automorphism_RNSc_GHS_hoisted then only
+    // computes the key products, and matches mlwe_automorphism_RNSc_GHS up to
+    // noise. Its key must have the same gadget, ring and pass-through
+    // components as `ksk` (as automorphism keys generated together for one
+    // level do); otherwise it returns -1 and leaves `out` untouched. A hoisted
+    // sample is read-only and may be shared between threads.
     typedef struct _MLWE_Hoisted *MLWE_Hoisted;
     MLWE_Hoisted mlwe_hoist(RNSc_MLWE in, RNS_MLWE_KS_Key ksk);
     void free_mlwe_hoisted(MLWE_Hoisted h);
     int mlwe_automorphism_RNSc_GHS_hoisted(RNSc_MLWE out, MLWE_Hoisted h, uint64_t gen,
                                            RNS_MLWE_KS_Key ksk, uint64_t lvl);
-    // out[i] = Aut_gens[i](h's sample) for every i < n, on up to `n_threads`
-    // threads (0: the library's limit). Every key is checked first; -1 if one
-    // does not fit, with no output written.
+    // out[i] = Aut_gens[i](sample of h) for i < n, on up to `n_threads`
+    // threads (0: the library limit). Returns -1, writing nothing, if any key
+    // does not fit `h`.
     int mlwe_automorphisms_RNSc_GHS_hoisted(RNSc_MLWE *out, MLWE_Hoisted h, const uint64_t *gens,
                                             RNS_MLWE_KS_Key *ksks, uint64_t n, uint64_t lvl,
                                             uint64_t n_threads);
-    // out[i] = Aut_gens[i](in[i]) for every i < n, independently, on up to
-    // `n_threads` threads (0: the library's limit). gens[i] == 1 copies, and
-    // its key may be NULL.
+    // out[i] = Aut_gens[i](in[i]) for i < n, on up to `n_threads` threads (0:
+    // the library limit). gens[i] == 1 copies, and then ksks[i] may be NULL.
     void mlwe_automorphism_RNSc_GHS_batch(RNSc_MLWE *out, RNSc_MLWE *in, const uint64_t *gens,
                                           RNS_MLWE_KS_Key *ksks, uint64_t n, uint64_t lvl,
                                           uint64_t n_threads);
@@ -228,18 +223,16 @@ extern "C"
     void mlwe_full_packing_keyswitch_scaled(RNSc_MLWE *vec, uint64_t ell, RNS_MLWE_KS_Key *ksks,
                                             uint64_t lvl);
     void mlwe_round_division(RNSc_MLWE out, ArithRing to);
-    // Reduce every component into `to`, a quotient of the sample's ring, in
-    // place and in either domain: the value is kept, not divided (compare
-    // mlwe_round_division), so this is valid where the plaintext does not
-    // depend on the modulus -- CKKS's level drop -- and not for BFV, whose
-    // scaling is the modulus.
+    // Reduces every component into `to`, a quotient of the sample's ring, in
+    // place and in either domain. Unlike mlwe_round_division, the value is not
+    // divided: this is the CKKS level drop, and it is not valid for BFV.
     void mlwe_mod_reduce(MLWE c, ArithRing to);
-    // mlwe_round_division of each of the n distinct samples, in place, each
-    // first moved to the canonical domain if it is not there, on up to
-    // `n_threads` threads (0: the library's limit).
+    // mlwe_round_division of each of the n distinct samples, in place,
+    // converting them to the canonical domain first if needed. Up to
+    // `n_threads` threads (0: the library limit).
     void mlwe_round_division_batch(RNSc_MLWE *io, ArithRing to, uint64_t n, uint64_t n_threads);
-    // Each of the n distinct samples moved to the mul domain in place (those
-    // already there are left alone), on up to `n_threads` threads.
+    // Moves each of the n distinct samples to the mul domain in place (a no-op
+    // for those already there). Up to `n_threads` threads.
     void mlwe_RNSc_to_RNS_batch(RNS_MLWE *io, uint64_t n, uint64_t n_threads);
 
     // Gadget decomposition products: decompose `poly` against the gadget
@@ -256,26 +249,25 @@ extern "C"
     // modulo `prime`: enough to cover every value below it.
     uint64_t gadget_radix_digits(uint64_t prime, uint64_t log_base);
 
-    // The gadget decomposition of one element, kept for several products: `n`
-    // digits over the key's ring, in the order its keys are, each lifted and
-    // ready to multiply (or, on a ring that is not fully split, canonical).
+    // A stored gadget decomposition of one element: `n` digits over the key's
+    // ring, in key order, ready to multiply (in the mul domain, or canonical
+    // when the ring is not fully split).
     typedef struct
     {
         ArithElement *digit;
         uint64_t n;
     } GadgetDigits;
 
-    // Decompose `poly` as gadget_mul_*to_polynomial would against `ksk` and
-    // `log_base`, keeping the digits; `ksk` fixes only the key ring and the
-    // gadget, so any key array generated for both serves.
+    // Decomposes `poly` as gadget_mul_*to_polynomial would, keeping the
+    // digits. `ksk` only fixes the key ring and the gadget, so any key array
+    // with both will do.
     void gadget_decompose(GadgetDigits *out, RNS_MLWE *ksk, const ArithElement *poly,
                           uint64_t log_base);
     void gadget_digits_free(GadgetDigits *digits);
-    // out -= sum_i Aut_gen(digit_i) * ksk[i]. The image of a decomposition
-    // under an automorphism is a decomposition of the image with the same
-    // digit bounds, so this is the gadget product of Aut_gen(poly) -- up to
-    // which representative each digit takes, not bit for bit. `gen` is odd and
-    // below 2N; 1 is the identity.
+    // out -= sum_i Aut_gen(digit_i) * ksk[i]: the gadget product of
+    // Aut_gen(poly), because permuted digits are a valid decomposition of the
+    // permuted element (equal to decomposing Aut_gen(poly) up to the choice of
+    // digit representatives). `gen` is odd and below 2N; 1 is the identity.
     void gadget_mul_subto_automorphism(RNS_MLWE out, RNS_MLWE *ksk, const GadgetDigits *digits,
                                        uint64_t gen);
 

@@ -158,7 +158,7 @@ class ComplexPolynomial:
         """Sets the first ``len(v)`` values; any ``numbers.Complex`` is accepted."""
         if len(v) > self.ring.N:
             raise ValueError(f"Expected at most {self.ring.N} values, got {len(v)}")
-        # The builtin types first: the ABC check costs several times as much.
+        # Builtin types first: the ABC check is much slower.
         for val in v:
             if type(val) not in _BUILTIN_NUMBERS and not isinstance(
                 val, numbers.Complex

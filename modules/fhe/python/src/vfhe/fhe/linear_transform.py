@@ -110,10 +110,10 @@ class CKKS_LinearTransform:
         """``A`` applied to the slots of ``ciphertext``, without rescaling.
 
         ``ksks[k]`` is the rotation key for ``k`` slots
-        (`CKKS_Scheme.gen_rotation_key`), for every ``k`` in :attr:`rotations`.
-        The result's ``delta`` is the input's times ``scale``. The rotations
-        and products run on up to ``n_threads`` threads (0: the library's
-        limit, `vfhe.engine.set_num_threads`).
+        (`CKKS_Scheme.gen_rotation_key`), for every ``k`` in :attr:`rotations`. The
+        result's ``delta`` is the input's times ``scale``. Runs on up to
+        ``n_threads`` threads (0: the library limit, see
+        `vfhe.engine.set_num_threads`).
         """
         scheme = self.scheme
         if ciphertext.lvl != self.lvl or ciphertext.ring != scheme.rings[self.lvl]:
@@ -171,11 +171,10 @@ class CKKS_LinearTransform:
     ) -> CKKS_LinearTransform:
         """SlotToCoeff: afterwards the plaintext's coefficients hold the slots.
 
-        For ``n = slots`` (default ``N/2``) and ``R = N/(2n)``, slots ``z`` (an
-        ``n``-periodic vector) become the plaintext whose coefficients at ``R*t``
-        and ``R*t + N/2`` are ``Re z_t`` and ``Im z_t`` (times ``delta``), every
-        other coefficient zero. The matrix is ``U_n[j][t] = eta^(5^j * t)``,
-        ``eta = exp(2 pi i / 4n)``: the decoding map of such plaintexts.
+        For ``n = slots`` (default ``N/2``) and ``R = N/(2n)``, the ``n`` slot values
+        ``z`` become the plaintext whose coefficients at ``R*t`` and ``R*t + N/2``
+        are ``delta * Re z_t`` and ``delta * Im z_t``, all others zero. The matrix is
+        ``U_n[j][t] = eta^(5^j * t)`` with ``eta = exp(2 pi i / 4n)``.
         """
         n, roots, powers = _encoding_tables(scheme, slots)
         m = 4 * n
@@ -201,11 +200,12 @@ class CKKS_LinearTransform:
         scale: float | None = None,
         baby_steps: int | None = None,
     ) -> CKKS_LinearTransform:
-        """CoeffToSlot, the inverse of :meth:`slot_to_coeff`: ``U_n^H / n``.
+        """CoeffToSlot, the inverse of :meth:`slot_to_coeff` (``U_n^H / n``).
 
-        Afterwards slot ``t`` holds ``(m[R*t] + i*m[R*t + N/2]) / delta`` of the
-        input's plaintext ``m``, every block of ``n`` slots alike. Exact when
-        ``m`` is supported on the multiples of ``R`` -- always at ``n = N/2``.
+        Afterwards slot ``t`` holds ``(m[R*t] + i*m[R*t + N/2]) / delta`` for the
+        input plaintext ``m``, in every block of ``n`` slots. Exact when ``m`` has
+        nonzero coefficients only at multiples of ``R``, always the case for
+        ``n = N/2``.
         """
         n, roots, powers = _encoding_tables(scheme, slots)
         m = 4 * n

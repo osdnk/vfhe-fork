@@ -290,3 +290,21 @@ RNS_MLWE_Key mlwe_get_RNS_key_from_array(uint64_t N, uint64_t r, uint64_t l, uin
     }
     return res;
 }
+
+// In RNS the value modulo a quotient is the residues it keeps, in either
+// domain, so the reduction only narrows each component's mask; the rows of the
+// dropped primes stay allocated until the sample is freed.
+void mlwe_mod_reduce(MLWE c, ArithRing to)
+{
+    const uint64_t keep = arith_rns_ring_mask(to);
+    for (size_t i = 0; i < c->r; i++)
+    {
+        RNS_Polynomial a = arith_rns_polynomial(&c->a[i]);
+        assert((a->rns_mask & keep) == keep);
+        a->rns_mask = keep;
+    }
+    RNS_Polynomial b = arith_rns_polynomial(&c->b);
+    assert((b->rns_mask & keep) == keep);
+    b->rns_mask = keep;
+    c->ring = to;
+}

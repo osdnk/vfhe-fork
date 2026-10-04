@@ -245,6 +245,8 @@ extern "C"
     // the life of the process. Prefer this to arith_rns_ring_new wherever the
     // ring outlives the call, so no caller has to own it.
     ArithRing arith_rns_ring_get(uint64_t N, uint64_t rns_mask, RNS_Base base);
+    // The primes an RNS ring holds, as the mask it was built with.
+    uint64_t arith_rns_ring_mask(ArithRing ring);
     void arith_rns_ring_cache_clear(void);
     void arith_ring_free(ArithRing ring);
     // The RNS_Polynomial behind an element of an RNS ring, for the

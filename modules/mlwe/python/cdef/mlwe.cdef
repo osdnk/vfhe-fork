@@ -79,6 +79,10 @@ void mlwe_RNS_mul_addto_by_poly(void *out, void *in, ArithElement *poly);
 void mlwe_RNS_mul_subto_by_poly(void *out, void *in, ArithElement *poly);
 void mlwe_RNS_mul_by_poly(void *out, void *in, ArithElement *poly);
 void mlwe_RNS_linear_combination(void *out, void *in, ArithElement *coeff, uint64_t n);
+void mlwe_multiply_batch(void *out, void *in1, void *in2, void *ksk, uint64_t n,
+                         uint64_t n_threads);
+void mlwe_round_division_batch(void *io, void *to, uint64_t n, uint64_t n_threads);
+void mlwe_RNSc_to_RNS_batch(void *io, uint64_t n, uint64_t n_threads);
 void mlwe_RNS_linear_combinations(void *out, void *in, ArithElement *coeff, uint64_t n_out,
                                   uint64_t n_in, uint64_t n_threads);
 void mlwe_scale_RNS_mlwe_RNS(void *c, uint64_t *per_component);
@@ -91,6 +95,7 @@ void mlwe_sub_RNSc_polynomial(void *out, void *in1, ArithElement *in2);
 void mlwe_RNS_add_polynomial(void *out, void *in1, ArithElement *in2);
 void mlwe_RNS_sub_polynomial(void *out, void *in1, ArithElement *in2);
 void mlwe_round_division(void *out, void *to);
+void mlwe_mod_reduce(void *c, void *to);
 
 void *mlwe_extract_LWE(void *in, uint64_t idx);
 void *mlwe_new_RNS_ks_key(void *s, uint64_t count, uint64_t log_base);

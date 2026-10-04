@@ -544,8 +544,7 @@ class MLWE_Scheme:
             p.ring != ring for p in coefficients
         ):
             raise ValueError("every operand must be over one ring and rank")
-        for c in cts:
-            c.to_NTT()
+        self._to_ntt_batch(cts, n_threads)
         for p in coefficients:
             p.to_NTT()
         outs = [cts[0].new_like() for _ in rows]
@@ -721,6 +720,80 @@ class MLWE_Scheme:
         lib_rlwe.lib.mlwe_multiply(out.obj, in1.obj, in2.obj, ksk.obj)
         out.repr = repr.ntt
         return out
+
+    def multiply_batch(
+        self,
+        lhs: Sequence[CtT],
+        rhs: Sequence[MLWE],
+        ksk: MLWE_Set | list[MLWE_Set] | None = None,
+        n_threads: int = 0,
+    ) -> list[CtT]:
+        """``[multiply(lhs[i], rhs[i], ksk)]``, on up to ``n_threads`` threads
+        (0: the library's limit, `vfhe.engine.set_num_threads`). All the
+        ciphertexts share one ring and level."""
+        if len(lhs) != len(rhs):
+            raise ValueError("expected as many right operands as left ones")
+        if not lhs:
+            return []
+        ring, lvl = lhs[0].ring, lhs[0].lvl
+        if any(c.ring != ring or c.lvl != lvl for c in (*lhs, *rhs)):
+            raise ValueError("the ciphertexts must share one ring and level")
+        self._to_ntt_batch([*lhs, *rhs], n_threads)
+        if ksk is None:
+            key = ffi.NULL
+            outs = [a.new_like(lvl=lvl, rank=self.extended_rank) for a in lhs]
+            for out in outs:
+                out.is_extended = True
+        else:
+            key = (ksk if isinstance(ksk, MLWE_Set) else ksk[lvl]).obj
+            outs = [a.new_like(lvl=lvl, ring=self.rings[lvl]) for a in lhs]
+        lib_rlwe.lib.mlwe_multiply_batch(
+            ffi.new("void *[]", [out.obj for out in outs]),
+            ffi.new("void *[]", [a.obj for a in lhs]),
+            ffi.new("void *[]", [b.obj for b in rhs]),
+            key,
+            len(lhs),
+            n_threads,
+        )
+        for out in outs:
+            out.repr = repr.ntt
+        return outs
+
+    def round_division_batch(
+        self, cts: Sequence[CtT], lvl: int, n_threads: int = 0
+    ) -> list[CtT]:
+        """:meth:`MLWE.round_division` of each of the distinct ``cts`` into
+        level ``lvl``, in place, on up to ``n_threads`` threads (0: the
+        library's limit)."""
+        if len({id(c) for c in cts}) != len(cts):
+            raise ValueError("the ciphertexts must be distinct")
+        ring = self.rings[lvl]
+        if any(not ring.is_quotient_ring(c.ring) for c in cts):
+            raise ValueError(
+                "the level's ring must be a quotient of every ciphertext's"
+            )
+        lib_rlwe.lib.mlwe_round_division_batch(
+            ffi.new("void *[]", [c.obj for c in cts]),
+            ring.arith_ring,
+            len(cts),
+            n_threads,
+        )
+        for c in cts:
+            c.repr = repr.coeff
+            c.lvl = lvl
+            c.ring = ring
+        return list(cts)
+
+    def _to_ntt_batch(self, cts: Sequence[MLWE], n_threads: int) -> None:
+        """Moves the distinct ``cts`` not yet in the NTT domain there, in one
+        native call."""
+        pending = list({id(c): c for c in cts if c.repr != repr.ntt}.values())
+        if pending:
+            lib_rlwe.lib.mlwe_RNSc_to_RNS_batch(
+                ffi.new("void *[]", [c.obj for c in pending]), len(pending), n_threads
+            )
+            for c in pending:
+                c.repr = repr.ntt
 
     def relinearize(self, c_ext: CtT, ksk: MLWE_Set | list[MLWE_Set]) -> CtT:
         """Relinearize an extended product back to rank r.
@@ -1058,6 +1131,30 @@ class MLWE:
             raise ValueError("destination must be a quotient of the current ring")
         self.to_coeff()
         lib_rlwe.lib.mlwe_round_division(self.obj, ring.arith_ring)
+        self.lvl = lvl
+        self.ring = ring
+        return self
+
+    def mod_reduce(  # noqa: PYI019 - Self needs 3.11
+        self: CtT, ring: RNSRing | None = None, lvl: int | None = None
+    ) -> CtT:
+        """Reduce the ciphertext into a smaller (quotient) ring, in place.
+
+        The primes the destination lacks are dropped and the value is kept,
+        not divided as :meth:`round_division` divides it: the phase is the
+        same small value modulo the smaller modulus. That is a level drop for
+        CKKS, whose plaintext does not depend on the modulus, and *not* for
+        BFV, whose scaling is the modulus. The destination is ``ring`` or the
+        level ``lvl`` (exactly one), and either domain is kept as it is.
+        """
+        if ring is None == lvl is None:
+            raise ValueError("provide exactly one of ring or lvl")
+        if lvl is None:
+            lvl = self.scheme.level_of_ring(cast("RNSRing", ring))
+        ring = self.scheme.rings[lvl]
+        if not ring.is_quotient_ring(self.ring):
+            raise ValueError("destination must be a quotient of the current ring")
+        lib_rlwe.lib.mlwe_mod_reduce(self.obj, ring.arith_ring)
         self.lvl = lvl
         self.ring = ring
         return self

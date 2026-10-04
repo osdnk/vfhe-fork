@@ -231,6 +231,99 @@ class CKKS_Scheme(MLWE_Scheme):
         ciphertext.delta = ciphertext.delta / dropped
         return ciphertext
 
+    def rescale_batch(
+        self, cts: Sequence[CKKS_Ciphertext], n_threads: int = 0
+    ) -> list[CKKS_Ciphertext]:
+        """:meth:`rescale` of each of the distinct ``cts``, which share a level,
+        on up to ``n_threads`` threads (0: the library's limit). In place, like
+        :meth:`rescale`, except where the next level needs
+        :meth:`rational_rescale`, which returns new ciphertexts one by one."""
+        if not cts:
+            return []
+        lvl = cts[0].lvl
+        if any(c.lvl != lvl or c.ring != cts[0].ring for c in cts):
+            raise ValueError("the ciphertexts must share a level")
+        if not lvl + 1 < len(self.rings):
+            raise ValueError("no lower level to rescale into")
+        current_ring, next_ring = cts[0].ring, self.rings[lvl + 1]
+        if not next_ring.is_quotient_ring(current_ring):
+            return [self.rational_rescale(c) for c in cts]
+        dropped = math.prod(p for p in current_ring.primes if p not in next_ring.primes)
+        self.round_division_batch(cts, lvl + 1, n_threads)
+        for c in cts:
+            c.delta = c.delta / dropped
+        return list(cts)
+
+    def multiply(
+        self,
+        in1: CKKS_Ciphertext,
+        in2: MLWE,
+        ksk: MLWE_Set | list[MLWE_Set] | None = None,
+    ) -> CKKS_Ciphertext:
+        """:meth:`MLWE_Scheme.multiply`, not rescaled, with the product's
+        ``delta`` the product of the operands'."""
+        out = super().multiply(in1, in2, ksk)
+        out.delta = in1.delta * cast("CKKS_Ciphertext", in2).delta
+        return out
+
+    def multiply_batch(
+        self,
+        lhs: Sequence[CKKS_Ciphertext],
+        rhs: Sequence[MLWE],
+        ksk: MLWE_Set | list[MLWE_Set] | None = None,
+        n_threads: int = 0,
+    ) -> list[CKKS_Ciphertext]:
+        """``lhs[i] * rhs[i]`` for every ``i``, relinearized with ``ksk`` but not
+        rescaled, on up to ``n_threads`` threads (0: the library's limit)."""
+        outs = super().multiply_batch(lhs, rhs, ksk, n_threads)
+        for out, a, b in zip(outs, lhs, rhs, strict=True):
+            out.delta = a.delta * cast("CKKS_Ciphertext", b).delta
+        return outs
+
+    def product(
+        self, cts: Sequence[CKKS_Ciphertext], n_threads: int = 0
+    ) -> CKKS_Ciphertext:
+        """The product of ``cts``, multiplied as a balanced binary tree.
+
+        The tree is ``ceil(log2(n))`` levels deep, each consuming one level of
+        the chain, instead of the ``n - 1`` a chain of products would. Every
+        product is relinearized with :attr:`rlk` and rescaled; at a tree level
+        with an odd count, the last factor moves down a level unmultiplied
+        (:meth:`MLWE.mod_reduce`, on a copy), which needs each level's ring to
+        be a quotient of the one above -- a power-of-two count does not. The
+        products of one tree level run on up to ``n_threads`` threads (0: the
+        library's limit, `vfhe.engine.set_num_threads`).
+        """
+        n = len(cts)
+        if n == 0:
+            raise ValueError("expected at least one factor")
+        if self.rlk is None:
+            raise ValueError("the product needs the relinearization key (rlk)")
+        lvl = cts[0].lvl
+        depth = (n - 1).bit_length()
+        if lvl + depth >= len(self.rings):
+            raise ValueError(f"{n} factors need {depth} levels below level {lvl}")
+        if n & (n - 1) and not all(
+            self.rings[k + 1].is_quotient_ring(self.rings[k])
+            for k in range(lvl, lvl + depth)
+        ):
+            raise ValueError(
+                f"{n} factors is not a power of two, which needs nested levels "
+                "to carry the odd factor down"
+            )
+        layer = list(cts)
+        if n == 1:
+            return layer[0].copy()
+        while len(layer) > 1:
+            carry = layer[-1] if len(layer) % 2 else None
+            products = self.multiply_batch(
+                layer[0::2][: len(layer) // 2], layer[1::2], self.rlk, n_threads
+            )
+            layer = self.rescale_batch(products, n_threads)
+            if carry is not None:
+                layer.append(carry.copy().mod_reduce(lvl=layer[0].lvl))
+        return layer[0]
+
     def rational_rescale(self, ct: CKKS_Ciphertext) -> CKKS_Ciphertext:
         """
         Rescale from level (lvl) to (lvl+1) as planned in the residue system.

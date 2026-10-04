@@ -132,6 +132,10 @@ versions may contain breaking changes.
   rows of coefficients at once; `MLWE_Scheme.automorphism_batch`, one
   automorphism each on several ciphertexts; and `CKKS_Scheme.conjugate` /
   `gen_conjugation_key`.
+- Add `CKKS_Scheme.product(cts)`: the product of ciphertexts as a balanced
+  tree, `ceil(log2(n))` levels deep.
+- Add `MLWE.mod_reduce(ring | lvl)`: a ciphertext reduced into a smaller
+  level in place, the value kept rather than divided -- CKKS's level drop.
 - Add a library-wide limit on parallelism: `vfhe.engine.set_num_threads(n)` /
   `num_threads()`, defaulting to `VFHE_NUM_THREADS` or else 1 (single
   threaded), and kept across `dynamic_extensions` reloads. Every parallel operation
@@ -209,6 +213,9 @@ versions may contain breaking changes.
 
 ### Fixed
 
+- Fix `CKKS_Scheme.multiply` (inherited from `MLWE_Scheme`) returning the
+  first operand's `delta` instead of the product of both, so a product taken
+  with it decoded at the wrong scale; `*` was right.
 - Fix `ComplexRing(N)` crashing for `N < 8` on avx512ifma, and
   `complex_poly_scale_double` scaling nothing below `N = 4` there: the
   vectorized transforms need a full vector of values, and their table loader

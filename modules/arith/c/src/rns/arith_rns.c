@@ -342,6 +342,8 @@ ArithRing arith_rns_ring_get(uint64_t N, uint64_t rns_mask, RNS_Base base)
     return ring;
 }
 
+uint64_t arith_rns_ring_mask(ArithRing ring) { return params_of(ring)->rns_mask; }
+
 // Drop the cache. Only the dynamic-extension reload needs this: the rings
 // point at a method table in the retired library.
 void arith_rns_ring_cache_clear(void)

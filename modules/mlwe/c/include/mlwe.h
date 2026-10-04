@@ -172,6 +172,12 @@ extern "C"
     uint64_t mlwe_extended_rank(uint64_t r);
     void mlwe_tensor_product(ArithElement *out, RNS_MLWE in1, RNS_MLWE in2);
     void mlwe_multiply(RNS_MLWE out, RNS_MLWE in1, RNS_MLWE in2, RNS_MLWE_KS_Key ksk);
+    // out[i] = in1[i] * in2[i] for every i < n, as mlwe_multiply with the one
+    // `ksk` (NULL: extended products), on up to `n_threads` threads (0: the
+    // library's limit). The inputs are in the mul domain; an input may appear
+    // in several products.
+    void mlwe_multiply_batch(RNS_MLWE *out, RNS_MLWE *in1, RNS_MLWE *in2, RNS_MLWE_KS_Key ksk,
+                             uint64_t n, uint64_t n_threads);
 
     RNS_MLWE_Key mlwe_new_RNS_key_from_array(uint64_t *array, uint64_t N, uint64_t r, uint64_t l,
                                              RNS_Base base, double sigma);
@@ -222,6 +228,19 @@ extern "C"
     void mlwe_full_packing_keyswitch_scaled(RNSc_MLWE *vec, uint64_t ell, RNS_MLWE_KS_Key *ksks,
                                             uint64_t lvl);
     void mlwe_round_division(RNSc_MLWE out, ArithRing to);
+    // Reduce every component into `to`, a quotient of the sample's ring, in
+    // place and in either domain: the value is kept, not divided (compare
+    // mlwe_round_division), so this is valid where the plaintext does not
+    // depend on the modulus -- CKKS's level drop -- and not for BFV, whose
+    // scaling is the modulus.
+    void mlwe_mod_reduce(MLWE c, ArithRing to);
+    // mlwe_round_division of each of the n distinct samples, in place, each
+    // first moved to the canonical domain if it is not there, on up to
+    // `n_threads` threads (0: the library's limit).
+    void mlwe_round_division_batch(RNSc_MLWE *io, ArithRing to, uint64_t n, uint64_t n_threads);
+    // Each of the n distinct samples moved to the mul domain in place (those
+    // already there are left alone), on up to `n_threads` threads.
+    void mlwe_RNSc_to_RNS_batch(RNS_MLWE *io, uint64_t n, uint64_t n_threads);
 
     // Gadget decomposition products: decompose `poly` against the gadget
     // `log_base` names -- the RNS one (one digit per prime) when it is 0, the

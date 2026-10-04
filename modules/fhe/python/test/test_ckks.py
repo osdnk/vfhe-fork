@@ -6,10 +6,15 @@ Encode/decode, encrypt/decrypt, slot rotation, and ciphertext multiplication
 (ciphertext*ciphertext with relinearization+rescale, and ciphertext*plaintext).
 """
 
+import cmath
+import math
+
 import pytest
+import vfhe.engine as engine
 from vfhe.arith import Ring
 from vfhe.arith.residue_selection import search_log_residues_minq0
 from vfhe.crypto import entropy
+from vfhe.engine import ffi
 from vfhe.fhe import CKKS_Ciphertext, CKKS_Scheme
 
 N = 256
@@ -433,3 +438,146 @@ def test_ciphertext_multiplication_module_rank(r, N_r):
     dec = scheme.decode(scheme.decrypt(c_mul, key), scaling_factor=c_mul.delta)
     expected = [a * b for a, b in zip(v1, v2, strict=False)]
     assert all(abs(e - d) < 0.05 for e, d in zip(expected, dec, strict=False))
+
+
+@pytest.fixture
+def threads():
+    """Lets the test's parallel calls use up to 8 threads (vfhe defaults to 1)."""
+    engine.set_num_threads(8)
+    yield
+    engine.set_num_threads()
+
+
+def _product_scheme(n_levels, n=N):
+    scheme = CKKS_Scheme(
+        Ring(n, prime_size=[60] + [40] * n_levels + [60], split_degree=1),
+        scaling_factor=2**40,
+        special_primes=1,
+    )
+    key = scheme.key_gen_sparse(n // 8, 3.2)
+    s_0 = key.poly[0]
+    scheme.rlk = scheme.gen_rlk(key, [-(s_0 * s_0)])
+    return scheme, key
+
+
+def _unit_values(n):
+    # On the unit circle, so a product of many stays the same size.
+    return [
+        cmath.exp(2j * cmath.pi * entropy.below(1 << 20) / (1 << 20)) for _ in range(n)
+    ]
+
+
+def _check_product(scheme, key, n_factors, n_threads=0):
+    values = [_unit_values(scheme.N // 2) for _ in range(n_factors)]
+    cts = [scheme.encrypt(scheme.encode(v), key) for v in values]
+    out = scheme.product(cts, n_threads)
+    assert out.lvl == (n_factors - 1).bit_length()
+    dec = scheme.decode(scheme.decrypt(out, key), scaling_factor=out.delta)
+    expected = [math.prod(v[i] for v in values) for i in range(scheme.N // 2)]
+    assert all(abs(e - d) < 1e-3 for e, d in zip(expected, dec, strict=True))
+
+
+@pytest.mark.parametrize("n_factors", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_product_of_ciphertexts(n_factors):
+    scheme, key = _product_scheme(3)
+    _check_product(scheme, key, n_factors)
+
+
+@pytest.mark.usefixtures("threads")
+def test_product_on_several_threads():
+    scheme, key = _product_scheme(3, n=256)
+    for n_threads in (2, 8, 0):
+        _check_product(scheme, key, 8, n_threads)
+
+
+def test_product_refusals():
+    scheme, key = _product_scheme(2)
+    ct = scheme.encrypt(scheme.encode(_unit_values(N // 2)), key)
+    with pytest.raises(ValueError, match="levels"):
+        scheme.product([ct] * 8)
+    scheme.rlk = None
+    with pytest.raises(ValueError, match="rlk"):
+        scheme.product([ct, ct])
+
+
+def test_multiply_batch_with_a_shared_operand():
+    scheme, key = _product_scheme(1)
+    x, y = (_unit_values(N // 2) for _ in range(2))
+    cx, cy = (scheme.encrypt(scheme.encode(v), key) for v in (x, y))
+    outs = scheme.rescale_batch(scheme.multiply_batch([cx, cx], [cx, cy], scheme.rlk))
+    for out, expected in zip(
+        outs,
+        ([a * a for a in x], [a * b for a, b in zip(x, y, strict=True)]),
+        strict=True,
+    ):
+        assert out.lvl == 1
+        dec = scheme.decode(scheme.decrypt(out, key), scaling_factor=out.delta)
+        assert all(abs(e - d) < 1e-3 for e, d in zip(expected, dec, strict=True))
+
+
+def test_product_over_a_rational_rescale_chain():
+    log_top_residues, residue_indices_chain = search_log_residues_minq0(
+        log_scaling_factor_chain=[29, 29, 29],
+        logr_min=40,
+        logr_max=64,
+        max_modulus=200,
+    )
+    Rq = Ring(N, split_degree=1, prime_size=[*log_top_residues, 50])
+    special_index = len(log_top_residues)
+    rings = [_subring(Rq, *indices) for indices in residue_indices_chain]
+    special_rings = [
+        _subring(Rq, *indices, special_index) for indices in residue_indices_chain
+    ]
+    scheme = CKKS_Scheme(
+        rings, scaling_factor=2**29, special_primes=1, special_rings=special_rings
+    )
+    assert not rings[1].is_quotient_ring(rings[0])
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    s_0 = key.poly[0]
+    scheme.rlk = scheme.gen_rlk(key, [-(s_0 * s_0)])
+    _check_product(scheme, key, 4)
+    # An odd factor would have to drop a level, and these levels do not nest.
+    ct = scheme.encrypt(scheme.encode(_unit_values(N // 2)), key)
+    with pytest.raises(ValueError, match="nested"):
+        scheme.product([ct, ct, ct])
+
+
+def test_multiply_carries_the_product_of_the_scales():
+    scheme, key = _product_scheme(1)
+    x, y = (_unit_values(N // 2) for _ in range(2))
+    # Unequal scales, so a delta taken from one operand would show.
+    cx = scheme.encrypt(scheme.encode(x), key)
+    cy = scheme.encrypt(scheme.encode(y, scale=2**39), key)
+    cy.delta = 2.0**39
+    out = scheme.multiply(cx, cy, scheme.rlk)
+    assert out.delta == 2.0**79
+    out = scheme.rescale(out)
+    dec = scheme.decode(scheme.decrypt(out, key), scaling_factor=out.delta)
+    expected = [a * b for a, b in zip(x, y, strict=True)]
+    assert all(abs(e - d) < 1e-3 for e, d in zip(expected, dec, strict=True))
+
+
+@pytest.mark.parametrize("ntt", [False, True])
+def test_mod_reduce_drops_a_level_and_keeps_the_value(ntt):
+    scheme, key = _product_scheme(2)
+    x, y = (_unit_values(N // 2) for _ in range(2))
+    cx = scheme.encrypt(scheme.encode(x), key)
+    if ntt:
+        cx.to_NTT()
+    else:
+        cx.to_coeff()
+    assert cx.mod_reduce(lvl=1) is cx
+    assert cx.lvl == 1 and cx.ring == scheme.rings[1] and cx.delta == 2.0**40
+    assert ffi.cast("MLWE", cx.obj).ring == scheme.rings[1].arith_ring
+    dec = scheme.decode(scheme.decrypt(cx, key), scaling_factor=cx.delta)
+    assert all(abs(a - d) < 1e-3 for a, d in zip(x, dec, strict=True))
+    # and it multiplies with a ciphertext that reached level 1 by a rescale
+    ones = scheme.encrypt(scheme.encode([1] * (N // 2)), key)
+    cy = scheme.encrypt(scheme.encode(y), key) * ones
+    assert cy.lvl == 1
+    out = cx * cy
+    dec = scheme.decode(scheme.decrypt(out, key), scaling_factor=out.delta)
+    expected = [a * b for a, b in zip(x, y, strict=True)]
+    assert all(abs(e - d) < 1e-3 for e, d in zip(expected, dec, strict=True))
+    with pytest.raises(ValueError, match="quotient"):
+        cx.mod_reduce(lvl=0)

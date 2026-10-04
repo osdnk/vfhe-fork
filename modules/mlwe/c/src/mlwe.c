@@ -747,6 +747,57 @@ void mlwe_multiply(RNS_MLWE out, RNS_MLWE in1, RNS_MLWE in2, RNS_MLWE_KS_Key ksk
     free_mlwe_RNS_sample(ext_c);
 }
 
+typedef struct
+{
+    RNS_MLWE *out;
+    RNS_MLWE *in1;
+    RNS_MLWE *in2;
+    RNS_MLWE_KS_Key ksk;
+    ArithRing to;
+} SampleJobs;
+
+static void multiply_job(void *ctx, uint64_t i)
+{
+    SampleJobs *jobs = (SampleJobs *)ctx;
+    mlwe_multiply(jobs->out[i], jobs->in1[i], jobs->in2[i], jobs->ksk);
+}
+
+void mlwe_multiply_batch(RNS_MLWE *out, RNS_MLWE *in1, RNS_MLWE *in2, RNS_MLWE_KS_Key ksk,
+                         uint64_t n, uint64_t n_threads)
+{
+    SampleJobs jobs = {out, in1, in2, ksk, NULL};
+    vfhe_parallel_for(n, n_threads, multiply_job, &jobs);
+}
+
+static void round_division_job(void *ctx, uint64_t i)
+{
+    SampleJobs *jobs = (SampleJobs *)ctx;
+    RNS_MLWE c = jobs->out[i];
+    if (mlwe_domain(c) == ARITH_DOMAIN_MUL)
+        mlwe_RNS_to_RNSc(c, c);
+    mlwe_round_division(c, jobs->to);
+}
+
+void mlwe_round_division_batch(RNSc_MLWE *io, ArithRing to, uint64_t n, uint64_t n_threads)
+{
+    SampleJobs jobs = {io, NULL, NULL, NULL, to};
+    vfhe_parallel_for(n, n_threads, round_division_job, &jobs);
+}
+
+static void to_mul_domain_job(void *ctx, uint64_t i)
+{
+    SampleJobs *jobs = (SampleJobs *)ctx;
+    RNS_MLWE c = jobs->out[i];
+    if (mlwe_domain(c) != ARITH_DOMAIN_MUL)
+        mlwe_RNSc_to_RNS(c, c);
+}
+
+void mlwe_RNSc_to_RNS_batch(RNS_MLWE *io, uint64_t n, uint64_t n_threads)
+{
+    SampleJobs jobs = {io, NULL, NULL, NULL, NULL};
+    vfhe_parallel_for(n, n_threads, to_mul_domain_job, &jobs);
+}
+
 // Rescale every component down to `to`. Which primes leave is the ring's
 // business, not the caller's.
 void mlwe_round_division(RNSc_MLWE out, ArithRing to)

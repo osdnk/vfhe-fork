@@ -165,6 +165,16 @@ class CKKS_Scheme(MLWE_Scheme):
         )
         return prod
 
+    def conjugate(
+        self, ciphertext: CKKS_Ciphertext, ksk: MLWE_Set | list[MLWE_Set]
+    ) -> CKKS_Ciphertext:
+        """Conjugates every slot."""
+        return self.automorphism(ciphertext, 2 * self.N - 1, ksk)
+
+    def gen_conjugation_key(self, key: MLWE_Key) -> MLWE_Set | list[MLWE_Set]:
+        """Generates the key-switching key :meth:`conjugate` needs."""
+        return self.gen_ksk_automorphism(key, key, 2 * self.N - 1)
+
     def rescale(self, ciphertext: CKKS_Ciphertext) -> CKKS_Ciphertext:
         """Rescale down one level: move the next ring in the chain of rings.
 

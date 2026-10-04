@@ -12,6 +12,7 @@ import math
 from typing import cast
 
 import pytest
+import vfhe.engine as engine
 from vfhe.arith import Polynomial, Ring
 from vfhe.crypto import entropy
 from vfhe.engine import ffi
@@ -599,6 +600,51 @@ def test_hoisted_automorphisms_refuse_a_key_of_another_gadget(ghs):
         scheme.automorphisms(c, [5, 25], ksks)
     with pytest.raises(ValueError, match="generator"):
         scheme.automorphisms(c, [4], ksks[:1])
+
+
+@pytest.fixture
+def threads():
+    """Lets the test's parallel calls use up to 8 threads (vfhe defaults to 1)."""
+    engine.set_num_threads(8)
+    yield
+    engine.set_num_threads()
+
+
+@pytest.mark.parametrize("n_threads", [1, 0])
+@pytest.mark.usefixtures("threads")
+def test_automorphism_batch(ghs, n_threads):
+    _Rq, Rp, scheme = ghs
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    ms = [Rp.random_element() for _ in range(4)]
+    cts = [enc(scheme, Rp, m, key) for m in ms]
+    gens = [5, 1, 25, 2 * N - 1]
+    ksks = [None if g == 1 else scheme.gen_ksk_automorphism(key, key, g) for g in gens]
+    outs = scheme.automorphism_batch(cts, gens, ksks, n_threads)
+    for m, g, out in zip(ms, gens, outs, strict=True):
+        assert scheme.phase(out, key).round_division(Rp) == m.automorphism(g)
+    with pytest.raises(ValueError, match="no key"):
+        scheme.automorphism_batch(cts[:1], [5], [None])
+
+
+@pytest.mark.parametrize("n_threads", [1, 0])
+@pytest.mark.usefixtures("threads")
+def test_linear_combinations(bv, n_threads):
+    # Plaintext coefficients scale the phase exactly, so the combination of
+    # the phases is the phase of the combination.
+    _Rq, Rp, scheme = bv
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    ring = scheme.rings[0]
+    cts = [enc(scheme, Rp, Rp.random_element(), key) for _ in range(3)]
+    small = [Polynomial(ring).from_array(_ternary(N)) for _ in range(5)]
+    rows = [[small[0], None, small[1]], [small[2], small[3], small[4]]]
+    outs = scheme.linear_combinations(cts, rows, n_threads)
+    phases = [scheme.phase(c, key) for c in cts]
+    for row, out in zip(rows, outs, strict=True):
+        expected = sum(
+            (p * ph for p, ph in zip(row, phases, strict=True) if p is not None),
+            start=Polynomial(ring).from_array([0] * N),
+        )
+        assert scheme.phase(out, key) == expected
 
 
 def test_gen_ksk_rejects_a_radix_larger_than_the_primes(bv):

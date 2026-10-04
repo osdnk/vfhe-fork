@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: 2026 Antonio Guimarães <antonio.guimaraes@imdea.org>
+# SPDX-FileCopyrightText: 2026 Robin Koestler
 # SPDX-License-Identifier: Apache-2.0
 """CKKS linear transforms: BSGS on slot matrices, SlotToCoeff, CoeffToSlot."""
 
 import random
 
 import pytest
+import vfhe.engine as engine
 from vfhe.arith import Polynomial, Ring
 from vfhe.fhe import CKKS_LinearTransform, CKKS_Scheme
 
@@ -12,6 +13,14 @@ N = 64
 M = N // 2
 DELTA = 2**40
 rng = random.Random(0x1A7)  # noqa: S311 - test data, not a key
+
+
+@pytest.fixture
+def threads():
+    """Lets the test's parallel calls use up to 8 threads (vfhe defaults to 1)."""
+    engine.set_num_threads(8)
+    yield
+    engine.set_num_threads()
 
 
 def _values(n):
@@ -51,6 +60,7 @@ def _close(a, b, tol=1e-3):
 
 @pytest.mark.parametrize("n_threads", [1, 3])
 @pytest.mark.parametrize("baby_steps", [None, 1, 5])
+@pytest.mark.usefixtures("threads")
 def test_sparse_matrix_on_the_slots(setup, n_threads, baby_steps):
     scheme, key, keys = setup
     diagonals = {d: _values(M) for d in (0, 1, 6, 17, 31)}
@@ -63,6 +73,7 @@ def test_sparse_matrix_on_the_slots(setup, n_threads, baby_steps):
     assert _close(dec, _apply_matrix(diagonals, M, z))
 
 
+@pytest.mark.usefixtures("threads")
 def test_threads_share_the_baby_rotations():
     # Every giant step reads all the baby rotations; a thread must never see
     # one while another is still transforming it.
@@ -145,7 +156,7 @@ def test_coeff_to_slot_undoes_slot_to_coeff(setup, slots):
 
 
 def test_conjugate(setup):
-    scheme, key, _keys_ = setup
+    scheme, key, _ = setup
     z = _values(M)
     ct = scheme.encrypt(scheme.encode(z), key)
     out = scheme.conjugate(ct, scheme.gen_conjugation_key(key))
@@ -153,13 +164,13 @@ def test_conjugate(setup):
     assert _close(dec, [v.conjugate() for v in z])
 
 
-def test_dot_plain_matches_term_by_term_products(setup):
-    scheme, key, _keys_ = setup
+def test_linear_combination_matches_term_by_term_products(setup):
+    scheme, key, _ = setup
     zs = [_values(M) for _ in range(3)]
     ws = [_values(M) for _ in range(3)]
     cts = [scheme.encrypt(scheme.encode(z), key) for z in zs]
     pts = [scheme.encode(w) for w in ws]
-    out = scheme.dot_plain(cts, pts)
+    out = scheme.linear_combination(cts, pts)
     assert out.delta == DELTA * scheme.scaling_factor
     dec = scheme.decode(scheme.decrypt(out, key), scaling_factor=out.delta)
     expected = [sum(z[t] * w[t] for z, w in zip(zs, ws, strict=True)) for t in range(M)]
@@ -167,7 +178,7 @@ def test_dot_plain_matches_term_by_term_products(setup):
 
 
 def test_refusals(setup):
-    scheme, key, _keys_ = setup
+    scheme, key, _ = setup
     with pytest.raises(ValueError, match="power of two"):
         CKKS_LinearTransform(scheme, {0: _values(6)})
     with pytest.raises(ValueError, match="twice"):

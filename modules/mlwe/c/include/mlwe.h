@@ -138,6 +138,18 @@ extern "C"
     void mlwe_RNSc_mul_by_xai_minus1(RNSc_MLWE out, RNSc_MLWE in, uint64_t a);
     void mlwe_RNS_mul_addto_by_poly(RNS_MLWE out, RNS_MLWE in, const ArithElement *poly);
     void mlwe_RNS_mul_subto_by_poly(RNS_MLWE out, RNS_MLWE in, const ArithElement *poly);
+    // The linear combination out = sum_i coeff[i] * in[i] of samples with
+    // plaintext coefficients, all in the mul domain over out's ring and rank,
+    // `out` distinct from every in[i]. A NULL coeff[i].handle drops the term,
+    // and no terms at all leave out = 0.
+    void mlwe_RNS_linear_combination(RNS_MLWE out, RNS_MLWE *in, const ArithElement *coeff,
+                                     uint64_t n);
+    // out[j] = sum_i coeff[j * n_in + i] * in[i] for every j < n_out: several
+    // linear combinations of the same samples (a plaintext matrix times a
+    // vector of samples), on up to `n_threads` threads (0: the library's
+    // limit; see vfhe_threads_for).
+    void mlwe_RNS_linear_combinations(RNS_MLWE *out, RNS_MLWE *in, const ArithElement *coeff,
+                                      uint64_t n_out, uint64_t n_in, uint64_t n_threads);
     void mlwe_automorphism_RNSc_GHS(RNSc_MLWE out, RNSc_MLWE in, uint64_t gen, RNS_MLWE_KS_Key ksk,
                                     uint64_t lvl);
     void mlwe_scale_RNSc_mlwe(RNSc_MLWE c, uint64_t scale);
@@ -189,6 +201,18 @@ extern "C"
     void free_mlwe_hoisted(MLWE_Hoisted h);
     int mlwe_automorphism_RNSc_GHS_hoisted(RNSc_MLWE out, MLWE_Hoisted h, uint64_t gen,
                                            RNS_MLWE_KS_Key ksk, uint64_t lvl);
+    // out[i] = Aut_gens[i](h's sample) for every i < n, on up to `n_threads`
+    // threads (0: the library's limit). Every key is checked first; -1 if one
+    // does not fit, with no output written.
+    int mlwe_automorphisms_RNSc_GHS_hoisted(RNSc_MLWE *out, MLWE_Hoisted h, const uint64_t *gens,
+                                            RNS_MLWE_KS_Key *ksks, uint64_t n, uint64_t lvl,
+                                            uint64_t n_threads);
+    // out[i] = Aut_gens[i](in[i]) for every i < n, independently, on up to
+    // `n_threads` threads (0: the library's limit). gens[i] == 1 copies, and
+    // its key may be NULL.
+    void mlwe_automorphism_RNSc_GHS_batch(RNSc_MLWE *out, RNSc_MLWE *in, const uint64_t *gens,
+                                          RNS_MLWE_KS_Key *ksks, uint64_t n, uint64_t lvl,
+                                          uint64_t n_threads);
     void mlwe_partial_trace(RNSc_MLWE out, RNSc_MLWE in, uint64_t *gens, RNS_MLWE_KS_Key *ksks,
                             uint64_t size, uint64_t lvl);
     void mlwe_trace(RNSc_MLWE out, RNSc_MLWE in, RNS_MLWE_KS_Key *ksks, uint64_t lvl);

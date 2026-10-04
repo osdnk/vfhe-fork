@@ -507,9 +507,18 @@ class RNSPolynomial(Polynomial):
         self.repr = in1.repr
 
     def automorphism(self, gen):
+        """``X -> X^gen``, returned in the NTT domain if ``self`` is in it and
+        the ring is fully split (where it only reorders the transform's
+        points), in the coefficient domain otherwise."""
         if gen >= self.ring.N * 2:
             raise ValueError("failed: gen >= self.ring.N * 2")
         res = Polynomial(self.ring)
+        if self.repr == repr.ntt and self.ring.split_degree == 1 and gen % 2 == 1:
+            idx = ffi.new("uint32_t[]", self.ring.N)
+            self.ring.lib.polynomial_RNS_automorphism_index(idx, self.ring.N, gen)
+            self.ring.lib.polynomial_RNS_permute(res.obj, self.obj, idx)
+            res.repr = repr.ntt
+            return res
         self.to_coeff()
         self.ring.lib.polynomial_RNSc_permute(res.obj, self.obj, gen)
         res.repr = repr.coeff

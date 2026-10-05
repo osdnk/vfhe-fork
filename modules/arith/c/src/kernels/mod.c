@@ -403,6 +403,29 @@ void mod_eltwise_reduce_signed(uint64_t *out, int64_t *in, uint64_t n, Modulus m
     }
 }
 
+void mod_eltwise_reduce_centered(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                 Modulus mod)
+{
+    const uint64_t head = n - n % MOD_MIN_VECTOR_LEN;
+    if (head < n)
+        mod_eltwise_reduce_centered_gen(out + head, in + head, q_in, n - head, mod);
+    if (head == 0)
+        return;
+    n = head;
+    switch (mod_shoup_shift(mod->q))
+    {
+    case MOD_SHIFT_32:
+        mod_eltwise_reduce_centered_32(out, in, q_in, n, mod);
+        break;
+    case MOD_SHIFT_50:
+        mod_eltwise_reduce_centered_50(out, in, q_in, n, mod);
+        break;
+    default:
+        mod_eltwise_reduce_centered_64(out, in, q_in, n, mod);
+        break;
+    }
+}
+
 void mod_reduce_array_mp(uint64_t *out, uint64_t *in_high, uint64_t *in_low, uint64_t n,
                          Modulus mod)
 {

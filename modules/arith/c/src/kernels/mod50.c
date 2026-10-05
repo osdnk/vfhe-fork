@@ -319,6 +319,21 @@ void mod_eltwise_reduce_signed_50(uint64_t *out, int64_t *in, uint64_t n, Modulu
     }
 }
 
+void mod_eltwise_reduce_centered_50(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                    Modulus mod)
+{
+    const __m512i *inv = (const __m512i *)in;
+    __m512i *outv = (__m512i *)out;
+    const size_t n_vec = n / 8;
+    const __m512i half = _mm512_set1_epi64(q_in >> 1);
+    const __m512i neg_q_in = _mm512_set1_epi64(negate_modq(modq(q_in, mod), mod->q));
+    // A copy no store to `out` can alias, so its constants stay in registers.
+    struct _Modulus m = *mod;
+
+    for (size_t i = 0; i < n_vec; i++)
+        outv[i] = _mm512_hexl_reduce_64b_50(centered_shift(inv[i], half, neg_q_in), &m);
+}
+
 void mod_reduce_array_mp_50(uint64_t *out, uint64_t *in_high, uint64_t *in_low, uint64_t n,
                             Modulus mod)
 {

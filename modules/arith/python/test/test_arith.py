@@ -754,3 +754,46 @@ def test_convert_base_exact_where_base_extend_also_applies():
     assert all((v - x) % ring.q_l == 0 for v, x in zip(lifted, value, strict=True))
     assert lifted != value
     assert extended.copy().mod_reduce(ring).get_polynomial() == value
+
+
+def _lift_residue(poly, idx, centered):
+    lib = poly.ring.lib
+    lift = (
+        lib.polynomial_RNSc_mod_reduce_lifted_centered
+        if centered
+        else lib.polynomial_RNSc_mod_reduce_lifted
+    )
+    out = Polynomial(poly.ring, repr.coeff)
+    lift(out.obj, poly.obj, idx)
+    return out
+
+
+def test_centered_lift_is_the_rns_gadget_digit():
+    """Residue ``j`` as one integer in ``(-p_j/2, p_j/2]``, in every prime.
+
+    That integer is the residue mod ``p_j``, so the digits recombine through
+    the CRT idempotents to the value mod ``Q``. Two narrow primes and two wide
+    ones put every pair of row widths on the lift's path, and the first
+    coefficients of each row sit where the centered representative turns
+    negative.
+    """
+    ring = Ring(N, prime_size=[42, 25, 52, 28], split_degree=1)
+    x = ring.random_element(ntt=False)
+    rows = x.get_coeff_matrix()
+    for row, p in zip(rows, ring.primes, strict=True):
+        row[:4] = [0, (p - 1) // 2, (p + 1) // 2, p - 1]
+    x.from_coeff_matrix(rows)
+
+    Q = ring.q_l
+    recombined = [0] * N
+    for idx, p, row in zip(ring.prime_indices, ring.primes, rows, strict=True):
+        digit = _lift_residue(x, idx, centered=True).get_polynomial(signed=True)
+        assert digit == [r - p if r > p // 2 else r for r in row]
+        assert digit[:4] == [0, (p - 1) // 2, -(p - 1) // 2, -1]
+        idempotent = Q // p * pow(Q // p, -1, p)
+        recombined = [
+            s + d * idempotent for s, d in zip(recombined, digit, strict=True)
+        ]
+
+        assert _lift_residue(x, idx, centered=False).get_polynomial() == row
+    assert [s % Q for s in recombined] == x.get_polynomial()

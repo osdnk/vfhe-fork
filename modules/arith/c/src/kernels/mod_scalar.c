@@ -15,7 +15,7 @@
 //   - add, sub, negate, add_scalar, sub_scalar, fma, mul_addto, mul_subto take
 //     their array operands already reduced to [0, q);
 //   - reduce, reduce_signed and reduce_array_mp accept any input, which is
-//     what they are for;
+//     what they are for, and reduce_centered any residue in [0, q_in);
 //   - the scalar operand of scale, fma, add_scalar and sub_scalar is reduced on
 //     entry and may be arbitrary.
 #include <arith.h>
@@ -93,6 +93,14 @@ void mod_eltwise_reduce_signed_gen(uint64_t *out, int64_t *in, uint64_t n, Modul
         const uint64_t r = modq((val < 0) ? -(uint64_t)val : (uint64_t)val, mod);
         out[i] = (val < 0) ? negate_modq(r, q) : r;
     }
+}
+
+void mod_eltwise_reduce_centered_gen(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                     Modulus mod)
+{
+    const uint64_t half = q_in >> 1, neg_q_in = negate_modq(modq(q_in, mod), mod->q);
+    for (size_t i = 0; i < n; i++)
+        out[i] = reduce_centered_modq(in[i], half, neg_q_in, mod);
 }
 
 void mod_eltwise_add_scalar_gen(uint64_t *out, uint64_t *in, uint64_t scalar, uint64_t n,

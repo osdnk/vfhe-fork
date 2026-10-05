@@ -301,6 +301,31 @@ void mod_eltwise_reduce_signed_32(uint64_t *out, int64_t *in, uint64_t n, Modulu
     }
 }
 
+void mod_eltwise_reduce_centered_32(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                    Modulus mod)
+{
+    const __m512i *inv = (const __m512i *)in;
+    __m512i *outv = (__m512i *)out;
+    const size_t n_vec = n / 8;
+    const __m512i q_vec = _mm512_set1_epi64(mod->q);
+    const __m512i half = _mm512_set1_epi64(q_in >> 1);
+    const __m512i neg_q_in = _mm512_set1_epi64(negate_modq(modq(q_in, mod), mod->q));
+
+    const uint64_t prod_right_shift = mod->prod_right_shift;
+    const __m512i barr_lo_vec = _mm512_set1_epi64(mod->barr_lo);
+
+    for (size_t i = 0; i < n_vec; i++)
+    {
+        __m512i a = centered_shift(_mm512_loadu_si512(&inv[i]), half, neg_q_in);
+        __m512i c1 = _mm512_srli_epi64(a, prod_right_shift);
+        __m512i q_hat = mulhi_approx_64(c1, barr_lo_vec);
+        __m512i res = _mm512_sub_epi64(a, _mm512_mullo_epi64(q_hat, q_vec));
+        res = _mm512_min_epu64(res, _mm512_sub_epi64(res, q_vec));
+        res = _mm512_min_epu64(res, _mm512_sub_epi64(res, q_vec));
+        _mm512_storeu_si512(&outv[i], res);
+    }
+}
+
 void mod_reduce_array_mp_32(uint64_t *out, uint64_t *in_high, uint64_t *in_low, uint64_t n,
                             Modulus mod)
 {

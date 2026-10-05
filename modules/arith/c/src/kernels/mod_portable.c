@@ -177,6 +177,12 @@ void mod_eltwise_reduce_signed(uint64_t *out, int64_t *in, uint64_t n, Modulus m
     mod_eltwise_reduce_signed_gen(out, in, n, mod);
 }
 
+void mod_eltwise_reduce_centered(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                 Modulus mod)
+{
+    mod_eltwise_reduce_centered_gen(out, in, q_in, n, mod);
+}
+
 void mod_eltwise_add_scalar(uint64_t *out, uint64_t *in, uint64_t scalar, uint64_t n, Modulus mod)
 {
     mod_eltwise_add_scalar_gen(out, in, scalar, n, mod);

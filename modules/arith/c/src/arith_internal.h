@@ -30,8 +30,27 @@ void mod_eltwise_add_gen(uint64_t *out, uint64_t *in1, uint64_t *in2, uint64_t n
 void mod_eltwise_sub_gen(uint64_t *out, uint64_t *in1, uint64_t *in2, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_gen(uint64_t *out, uint64_t *in, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_signed_gen(uint64_t *out, int64_t *in, uint64_t n, Modulus mod);
+void mod_eltwise_reduce_centered_gen(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                     Modulus mod);
 void mod_reduce_array_mp_gen(uint64_t *out, uint64_t *in_high, uint64_t *in_low, uint64_t n,
                              Modulus mod);
+
+/* x in [0, q_in) as its centered representative x - [x > q_in / 2] * q_in,
+   mod q. Adding neg_q_in = -q_in mod q instead keeps it one unsigned
+   reduction, of a value below q_in + q. */
+static inline uint64_t reduce_centered_modq(uint64_t x, uint64_t half, uint64_t neg_q_in,
+                                            Modulus mod)
+{
+    return modq(x + (neg_q_in & -(uint64_t)(x > half)), mod);
+}
+
+#if VFHE_HAVE_AVX512IFMA
+// The same shift on eight lanes, ahead of their reduction.
+static inline __m512i centered_shift(__m512i x, __m512i half, __m512i neg_q_in)
+{
+    return _mm512_mask_add_epi64(x, _mm512_cmpgt_epu64_mask(x, half), x, neg_q_in);
+}
+#endif
 
 // The NTT length below which the vectorized transforms cannot run: they consume
 // two AVX512 lane groups per butterfly stage, and their twiddle tables are
@@ -261,6 +280,26 @@ static inline bool rns_row_is_narrow(RNS_Base base, size_t i)
             mod_eltwise_reduce((out)->rows64[(oi)], (in)->rows64[(ii)], (n), (mod));               \
     } while (0)
 
+// RNS_ROW_REDUCE with source row `ii` read as centered residues mod `q_in`.
+#define RNS_ROW_REDUCE_CENTERED(out, in, oi, ii, n, q_in, mod)                                     \
+    do                                                                                             \
+    {                                                                                              \
+        const bool rc_on_ = rns_row_is_narrow((out)->base, (oi));                                  \
+        const bool rc_in_ = rns_row_is_narrow((in)->base, (ii));                                   \
+        if (rc_on_ && rc_in_)                                                                      \
+            mod_eltwise_reduce_centered_w32((out)->rows32[(oi)], (in)->rows32[(ii)], (q_in), (n),  \
+                                            (mod));                                                \
+        else if (rc_on_)                                                                           \
+            mod_eltwise_reduce_centered_narrow_from_wide((out)->rows32[(oi)], (in)->rows64[(ii)],  \
+                                                         (q_in), (n), (mod));                      \
+        else if (rc_in_)                                                                           \
+            mod_eltwise_reduce_centered_wide_from_narrow((out)->rows64[(oi)], (in)->rows32[(ii)],  \
+                                                         (q_in), (n), (mod));                      \
+        else                                                                                       \
+            mod_eltwise_reduce_centered((out)->rows64[(oi)], (in)->rows64[(ii)], (q_in), (n),      \
+                                        (mod));                                                    \
+    } while (0)
+
 // A signed 64-bit array reduced into one row: the samplers and the permutation.
 #define RNS_ROW_REDUCE_SIGNED(out, src, i, n, mod)                                                 \
     do                                                                                             \
@@ -289,6 +328,8 @@ void mod_eltwise_sub_scalar_w32(uint32_t *out, uint32_t *in, uint64_t scalar, ui
                                 Modulus mod);
 void mod_eltwise_reduce_w32(uint32_t *out, uint32_t *in, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_signed_w32(uint32_t *out, int64_t *in, uint64_t n, Modulus mod);
+void mod_eltwise_reduce_centered_w32(uint32_t *out, uint32_t *in, uint64_t q_in, uint64_t n,
+                                     Modulus mod);
 
 /* The exact base conversion's two extra passes (kernels/mod_basecvt.c).
    `accumulate` adds `in[i] * inv_q` to a running double sum, and `sub_indexed`
@@ -305,6 +346,10 @@ void mod_narrow_w32(uint32_t *out, const uint64_t *in, uint64_t n);
 void mod_widen_w32(uint64_t *out, const uint32_t *in, uint64_t n);
 void mod_eltwise_reduce_narrow_from_wide(uint32_t *out, uint64_t *in, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_wide_from_narrow(uint64_t *out, uint32_t *in, uint64_t n, Modulus mod);
+void mod_eltwise_reduce_centered_narrow_from_wide(uint32_t *out, uint64_t *in, uint64_t q_in,
+                                                  uint64_t n, Modulus mod);
+void mod_eltwise_reduce_centered_wide_from_narrow(uint64_t *out, uint32_t *in, uint64_t q_in,
+                                                  uint64_t n, Modulus mod);
 
 // 32-bit declarations
 void ntt_forward_32(uint64_t *out, uint64_t *in, NTT_Plan plan);
@@ -323,6 +368,8 @@ void mod_eltwise_add_32(uint64_t *out, uint64_t *in1, uint64_t *in2, uint64_t n,
 void mod_eltwise_sub_32(uint64_t *out, uint64_t *in1, uint64_t *in2, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_32(uint64_t *out, uint64_t *in, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_signed_32(uint64_t *out, int64_t *in, uint64_t n, Modulus mod);
+void mod_eltwise_reduce_centered_32(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                    Modulus mod);
 void mod_reduce_array_mp_32(uint64_t *out, uint64_t *in_high, uint64_t *in_low, uint64_t n,
                             Modulus mod);
 
@@ -343,6 +390,8 @@ void mod_eltwise_add_50(uint64_t *out, uint64_t *in1, uint64_t *in2, uint64_t n,
 void mod_eltwise_sub_50(uint64_t *out, uint64_t *in1, uint64_t *in2, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_50(uint64_t *out, uint64_t *in, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_signed_50(uint64_t *out, int64_t *in, uint64_t n, Modulus mod);
+void mod_eltwise_reduce_centered_50(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                    Modulus mod);
 void mod_reduce_array_mp_50(uint64_t *out, uint64_t *in_high, uint64_t *in_low, uint64_t n,
                             Modulus mod);
 
@@ -363,6 +412,8 @@ void mod_eltwise_add_64(uint64_t *out, uint64_t *in1, uint64_t *in2, uint64_t n,
 void mod_eltwise_sub_64(uint64_t *out, uint64_t *in1, uint64_t *in2, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_64(uint64_t *out, uint64_t *in, uint64_t n, Modulus mod);
 void mod_eltwise_reduce_signed_64(uint64_t *out, int64_t *in, uint64_t n, Modulus mod);
+void mod_eltwise_reduce_centered_64(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                    Modulus mod);
 void mod_reduce_array_mp_64(uint64_t *out, uint64_t *in_high, uint64_t *in_low, uint64_t n,
                             Modulus mod);
 

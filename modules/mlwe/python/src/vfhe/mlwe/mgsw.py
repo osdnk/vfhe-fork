@@ -15,6 +15,7 @@ class MGSW_Scheme:
         MLWE_scheme: MLWE_Scheme,
         ell: int | None = None,
         radix_log_base: int | None = None,
+        balanced: bool | None = None,
     ):
         """MGSW over ``MLWE_scheme``, encrypting against one of the two gadgets.
 
@@ -23,12 +24,14 @@ class MGSW_Scheme:
         one -- each prime contributing base-``2^radix_log_base`` digits instead
         of a single residue -- which bounds the products an external product
         accumulates by the radix rather than by the primes. See
-        :meth:`MLWE_Scheme.gadget_scalars`.
+        :meth:`MLWE_Scheme.gadget_scalars`. ``balanced`` picks the RNS gadget's
+        digit as in :class:`MLWE_Scheme`, and defaults to ``MLWE_scheme``'s.
         """
         self.mlwe_scheme = MLWE_scheme
         self.ell = ell if ell else MLWE_scheme.rings[0].ell
         self.ring = MLWE_scheme.special_rings[0]
         self.radix_log_base = radix_log_base
+        self.balanced = MLWE_scheme.balanced if balanced is None else balanced
 
     def gadget_scalars(self, lvl: int = 0) -> list[list[int]]:
         """The gadget elements, as the per-prime scaling vectors to encrypt.
@@ -116,6 +119,7 @@ class MGSW:
             self.gadget_size,
             self.scheme.mlwe_scheme.special_primes,
             self.scheme.radix_log_base or 0,
+            self.scheme.balanced,
         )
         res.repr = repr.ntt
 
@@ -146,6 +150,7 @@ def CMUX(in1: MLWE, in2: MLWE, selector: MGSW) -> MLWE:
         selector.gadget_size,
         in1.scheme.special_primes,
         selector.scheme.radix_log_base or 0,
+        selector.scheme.balanced,
     )
     res.repr = repr.ntt
     return res
@@ -175,6 +180,7 @@ def NCMUX(
         selector.gadget_size,
         in1.scheme.special_primes,
         selector.scheme.radix_log_base or 0,
+        selector.scheme.balanced,
     )
     res.repr = repr.ntt
     return res

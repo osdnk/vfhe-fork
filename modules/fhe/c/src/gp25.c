@@ -67,7 +67,8 @@ static inline int pthread_barrier_wait(pthread_barrier_t *barrier)
 #include <util.h>
 
 void gp25_RGSW_monomial_mul(RNS_MLWE *p0, uint64_t in_N, RNS_MLWE **e, uint64_t r_prec,
-                            RNS_MLWE_KS_Key ksk, uint64_t ell, uint64_t special_primes)
+                            RNS_MLWE_KS_Key ksk, uint64_t ell, uint64_t special_primes,
+                            bool balanced)
 {
     const uint64_t r = p0[0]->r;
     ArithRing ring = p0[0]->ring;
@@ -90,13 +91,13 @@ void gp25_RGSW_monomial_mul(RNS_MLWE *p0, uint64_t in_N, RNS_MLWE **e, uint64_t 
         for (size_t j = 0; j < power; j++)
         {
             mgsw_NCMUX_to_coeff(p[out_idx][j], p[in_idx][j], p[in_idx][in_N - power + j], e[i], ksk,
-                                ell, special_primes, 0);
+                                ell, special_primes, 0, balanced);
         }
 
         for (size_t j = 0; j < in_N - power; j++)
         {
             mgsw_CMUX_to_coeff(p[out_idx][j + power], p[in_idx][j + power], p[in_idx][j], e[i], ell,
-                               special_primes, 0);
+                               special_primes, 0, balanced);
         }
         // _to_coeff variants already leave each output in coefficient form.
     }
@@ -127,6 +128,7 @@ typedef struct
     RNS_MLWE_KS_Key ksk;
     uint64_t ell;
     uint64_t special_primes;
+    bool balanced;
     uint64_t start_k;
     uint64_t stride;
     pthread_barrier_t *barrier;
@@ -154,12 +156,13 @@ void *monomial_mul_worker(void *arg)
             if (k < power)
             {
                 mgsw_NCMUX_to_coeff(p[out_idx][k], p[in_idx][k], p[in_idx][args->in_N - power + k],
-                                    args->e[i], args->ksk, args->ell, args->special_primes, 0);
+                                    args->e[i], args->ksk, args->ell, args->special_primes, 0,
+                                    args->balanced);
             }
             else
             {
                 mgsw_CMUX_to_coeff(p[out_idx][k], p[in_idx][k], p[in_idx][k - power], args->e[i],
-                                   args->ell, args->special_primes, 0);
+                                   args->ell, args->special_primes, 0, args->balanced);
             }
         }
 
@@ -172,12 +175,12 @@ void *monomial_mul_worker(void *arg)
 
 void gp25_RGSW_monomial_mul_mt(RNS_MLWE *p0, uint64_t in_N, RNS_MLWE **e, uint64_t r_prec,
                                RNS_MLWE_KS_Key ksk, uint64_t ell, uint64_t special_primes,
-                               uint64_t num_threads)
+                               bool balanced, uint64_t num_threads)
 {
     num_threads = vfhe_threads_for(num_threads, in_N);
     if (num_threads <= 1)
     {
-        gp25_RGSW_monomial_mul(p0, in_N, e, r_prec, ksk, ell, special_primes);
+        gp25_RGSW_monomial_mul(p0, in_N, e, r_prec, ksk, ell, special_primes, balanced);
         return;
     }
 
@@ -207,6 +210,7 @@ void gp25_RGSW_monomial_mul_mt(RNS_MLWE *p0, uint64_t in_N, RNS_MLWE **e, uint64
         args[t].ksk = ksk;
         args[t].ell = ell;
         args[t].special_primes = special_primes;
+        args[t].balanced = balanced;
         args[t].barrier = &barrier;
         // strided assignment: thread t handles indices t, t+num_threads, t+2*num_threads, ...
         args[t].start_k = t;
@@ -254,7 +258,9 @@ typedef struct
     RNS_MLWE *p0;
     uint64_t *a;
     RNS_MLWE *s_sign; /* the MGSW: (r+1)*ell rows, in NTT form */
-    uint64_t in_N, ell, special_primes, N, start_k, end_k;
+    uint64_t in_N, ell, special_primes;
+    bool balanced;
+    uint64_t N, start_k, end_k;
 } suba_args_t;
 
 static void *suba_worker(void *arg)
@@ -276,8 +282,8 @@ static void *suba_worker(void *arg)
         mlwe_RNSc_mul_by_xai(pax, pk, ai);                       /* pax = p[k] * X^a       */
         const uint64_t m2a = (two_n - (2 * ai) % two_n) % two_n; /* (-2a) mod 2N           */
         mlwe_RNSc_mul_by_xai_minus1(tmp, pax, m2a);              /* tmp = pax * (X^m2a - 1) */
-        mgsw_external_product(ext, A->s_sign, tmp, A->ell, A->special_primes,
-                              0); /* ext = s_sign (X) tmp */
+        mgsw_external_product(ext, A->s_sign, tmp, A->ell, A->special_primes, 0,
+                              A->balanced); /* ext = s_sign (X) tmp */
         mlwe_copy_RNS_sample(pax_ntt, pax);
         mlwe_RNSc_to_RNS(pax_ntt, pax_ntt); /* pax -> NTT for the add  */
         for (size_t i = 0; i < r; i++)
@@ -294,13 +300,13 @@ static void *suba_worker(void *arg)
 }
 
 void gp25_sub_a_mt(RNS_MLWE *p0, uint64_t in_N, uint64_t *a, RNS_MLWE *s_sign, uint64_t ell,
-                   uint64_t special_primes, uint64_t N, uint64_t num_threads)
+                   uint64_t special_primes, bool balanced, uint64_t N, uint64_t num_threads)
 {
     num_threads = vfhe_threads_for(num_threads, in_N);
 
     if (num_threads == 1)
     {
-        suba_args_t args = {p0, a, s_sign, in_N, ell, special_primes, N, 0, in_N};
+        suba_args_t args = {p0, a, s_sign, in_N, ell, special_primes, balanced, N, 0, in_N};
         suba_worker(&args);
         return;
     }
@@ -311,7 +317,7 @@ void gp25_sub_a_mt(RNS_MLWE *p0, uint64_t in_N, uint64_t *a, RNS_MLWE *s_sign, u
     for (size_t t = 0; t < num_threads; t++)
     {
         uint64_t end = cur + chunk + (t < rem ? 1 : 0);
-        args[t] = (suba_args_t){p0, a, s_sign, in_N, ell, special_primes, N, cur, end};
+        args[t] = (suba_args_t){p0, a, s_sign, in_N, ell, special_primes, balanced, N, cur, end};
         cur = end;
         pthread_create(&threads[t], NULL, suba_worker, &args[t]);
     }

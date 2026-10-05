@@ -222,7 +222,7 @@ class GP25:
                 self.scheme.sample(si_poly * scaling_factor, key_out_special, out=out)
                 res_i.append(out)
             result.append(res_i)
-        return MLWE_Set(result)
+        return MLWE_Set(result, balanced=self.scheme.balanced)
 
     def sab_LUT_packing(self, lut: list[int], size: int, LUT_prec: int):
         rlwe_tv = MLWE(self.scheme)
@@ -378,6 +378,7 @@ class GP25:
                 aut_minus1.obj,
                 e[0].scheme.ell,
                 self.scheme.special_primes,
+                e[0].scheme.balanced,
                 self.threads,
             )
         else:
@@ -389,6 +390,7 @@ class GP25:
                 aut_minus1.obj,
                 e[0].scheme.ell,
                 self.scheme.special_primes,
+                e[0].scheme.balanced,
             )
 
         for c in p0:
@@ -423,6 +425,7 @@ class GP25:
             ffi.new("void*[]", [c.obj for c in s_sign.obj]),
             s_sign.scheme.ell,
             self.scheme.special_primes,
+            s_sign.scheme.balanced,
             self.ring.N,
             self.threads,
         )

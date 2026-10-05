@@ -65,10 +65,11 @@ def test_lwe_extraction():
         assert diff < 1000
 
 
-def test_packing_ksk():
+@pytest.mark.parametrize("balanced", [False, True])
+def test_packing_ksk(balanced):
     in_N = out_N = 256
     Rq = Ring(out_N, prime_size=[50, 50, 50], split_degree=1)
-    out_scheme = MLWE_Scheme(Rq, special_primes=0, module_rank=4)
+    out_scheme = MLWE_Scheme(Rq, special_primes=0, module_rank=4, balanced=balanced)
     lwe_key = LWE_Key(ring=Rq, sec_sigma=3.2, err_sigma=3.2, n=in_N)
     output_key = out_scheme.key_gen_sparse(64, 3.2, ternary=True)
     gp25 = GP25(out_scheme)
@@ -150,8 +151,9 @@ def test_packing_ksk_over_a_populated_base():
 
 
 @pytest.mark.complete
+@pytest.mark.parametrize("balanced", [False, True])
 @pytest.mark.parametrize("threads", [1, 4])
-def test_sab(deterministic_prng, threads):
+def test_sab(deterministic_prng, threads, balanced):
     # Bootstrapping is probabilistic; pin the C PRNG + Python RNG so this
     # exact-equality check is reproducible rather than flaky (seed chosen to
     # decrypt cleanly).
@@ -163,7 +165,9 @@ def test_sab(deterministic_prng, threads):
     Rp = Rq.quotient_ring(ell=1)
     in_ring = Rq.quotient_ring(ell=2)
     in_scheme = MLWE_Scheme(in_ring, special_primes=0, module_rank=1)
-    out_scheme = MLWE_Scheme(Rq, special_primes=1, module_rank=4, max_lvl=1)
+    out_scheme = MLWE_Scheme(
+        Rq, special_primes=1, module_rank=4, max_lvl=1, balanced=balanced
+    )
 
     input_key, r_prec = rs_sparse_ternary_key(in_scheme, 17, 3.2, 8)
     output_key = out_scheme.key_gen_sparse(64, 3.2, ternary=True)

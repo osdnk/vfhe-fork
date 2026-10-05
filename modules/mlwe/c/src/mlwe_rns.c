@@ -124,7 +124,7 @@ void mlwe_full_packing_keyswitch(RNS_MLWE out, LWE *in, uint64_t size, RNS_MLWE_
         {
             if (tmp_poly->rns_mask & (1ULL << j))
             {
-                polynomial_RNSc_mod_reduce_lifted(tmp_poly_red, tmp_poly, j);
+                polynomial_RNSc_mod_reduce_lifted_centered(tmp_poly_red, tmp_poly, j);
                 polynomial_RNSc_to_RNS(tmp_rns, tmp_poly_red);
                 ArithElement factor = {tmp_rns, ARITH_DOMAIN_MUL};
                 mlwe_RNS_mul_subto_by_poly(out, key->s[i][ksk_idx++], &factor);

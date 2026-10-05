@@ -18,7 +18,7 @@ from vfhe.arith import Polynomial, Ring
 from vfhe.arith.number_theory import crt
 from vfhe.crypto import entropy
 from vfhe.engine import ffi
-from vfhe.mlwe import LWE, LWE_Key, MGSW_Scheme, MLWE_Scheme, MLWE_Set
+from vfhe.mlwe import CMUX, LWE, LWE_Key, MGSW_Scheme, MLWE_Scheme, MLWE_Set
 
 N = 256
 
@@ -165,6 +165,72 @@ def test_mgsw_external_product_identity(bv):
     ct_id = mgsw_scheme.encrypt(Polynomial(Rp).from_array([1] + [0] * (N - 1)), key)
     res = ct_id.external_product(ct1)
     assert scheme.linear_decrypt(res, key).round_division(Rp) == m1
+
+
+@pytest.mark.parametrize("bit", [0, 1])
+def test_mgsw_cmux(bv, bit):
+    _Rq, Rp, scheme = bv
+    key = scheme.key_gen_sparse(N // 8, 3.2)
+    selector = MGSW_Scheme(scheme).encrypt(
+        Polynomial(Rp).from_array([bit] + [0] * (N - 1)), key
+    )
+    m = [Rp.random_element() for _ in range(2)]
+    out = CMUX(enc(scheme, Rp, m[0], key), enc(scheme, Rp, m[1], key), selector)
+    assert scheme.linear_decrypt(out, key).round_division(Rp) == m[bit]
+
+
+# --- the RNS gadget's digit -------------------------------------------------
+#
+# Without special primes a key switch adds exactly -sum_j d_j * e_j to the
+# linear decryption, and an external product by an encryption of 1 adds
+# sum_j d_j * e_j over all r + 1 components, so the added noise has variance
+# components * N * sigma^2 * sum_j E[d_j^2]. A centered digit has
+# E[d_j^2] = (p_j^2 - 1) / 12; one in [0, p_j) has about p_j^2 / 3, a bit more
+# standard deviation. The bound is a quarter of that bit.
+SIGMA = 3.2
+
+
+def _added_noise(scheme, Rp, key, key_out, operation):
+    """log2 of the std of what ``operation`` adds to the linear decryption."""
+    diffs = []
+    for _ in range(8):
+        c = enc(scheme, Rp, Rp.random_element(), key)
+        before = scheme.linear_decrypt(c, key)
+        after = scheme.linear_decrypt(operation(c), key_out)
+        before.to_coeff()
+        after.to_coeff()
+        diffs += (after - before).get_polynomial(signed=True)
+    return 0.5 * math.log2(sum(d * d for d in diffs) / len(diffs))
+
+
+def _assert_centered_digit_noise(measured, primes, components):
+    def log2_std(second_moment):
+        variance = components * N * SIGMA**2 * sum(second_moment(p) for p in primes)
+        return 0.5 * math.log2(variance)
+
+    assert abs(measured - log2_std(lambda p: (p * p - 1) / 12)) < 0.25
+    assert log2_std(lambda p: (p - 1) * (2 * p - 1) / 6) - measured > 0.75
+
+
+def test_keyswitch_noise_is_that_of_centered_digits(bv):
+    _Rq, Rp, scheme = bv
+    key = scheme.key_gen_sparse(N // 8, SIGMA)
+    key_out = scheme.key_gen_sparse(N // 8, SIGMA)
+    ksk = scheme.gen_ksk(key_out, key)
+    measured = _added_noise(
+        scheme, Rp, key, key_out, lambda c: scheme.keyswitch(c, ksk)
+    )
+    _assert_centered_digit_noise(measured, scheme.ring.primes, scheme.r)
+
+
+def test_external_product_noise_is_that_of_centered_digits(bv):
+    _Rq, Rp, scheme = bv
+    key = scheme.key_gen_sparse(N // 8, SIGMA)
+    one = MGSW_Scheme(scheme).encrypt(
+        Polynomial(Rp).from_array([1] + [0] * (N - 1)), key
+    )
+    measured = _added_noise(scheme, Rp, key, key, one.external_product)
+    _assert_centered_digit_noise(measured, scheme.ring.primes, scheme.r + 1)
 
 
 # Module ranks above 1, paired with a ring dimension that keeps the lattice

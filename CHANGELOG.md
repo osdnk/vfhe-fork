@@ -238,6 +238,20 @@ versions may contain breaking changes.
 - Allocations of 8 MiB and up ask the kernel for huge pages.
   [`USAGE.md`](docs/USAGE.md) covers the allocator settings that go with it.
 
+- The RNS gadget decomposes into centered residues, in `(-p_j/2, p_j/2]`,
+  rather than residues in `[0, p_j)`. The two agree modulo `p_j`, so the
+  decomposition stays exact, and the centered digit has a quarter of the
+  second moment, which is what the gadget products' noise grows with. Key
+  switches, automorphisms, relinearization, MGSW external products and CMUX,
+  and the LWE packing key switch, all over the RNS gadget, add about one bit
+  less noise standard deviation: at N = 2048 over five 42-bit primes, a GHS
+  key switch's goes from 2^7.4 to 2^6.4, and a BV external product's from
+  2^49.9 to 2^49.0. Their output ciphertexts change; what they decrypt to
+  does not. The radix gadget (`radix_log_base`) is unchanged. The digit is
+  the new `polynomial_RNSc_mod_reduce_lifted_centered`, one fused pass per
+  prime at the cost of the `[0, p_j)` lift, which
+  `polynomial_RNSc_mod_reduce_lifted` still gives.
+
 ### Fixed
 
 - Fix `CKKS_Scheme.multiply` (inherited from `MLWE_Scheme`) returning the

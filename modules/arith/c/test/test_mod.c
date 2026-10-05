@@ -86,6 +86,14 @@ static void ref_reduce_mp(uint64_t *o, uint64_t *hi, uint64_t *lo, uint64_t n, u
     for (uint64_t i = 0; i < n; i++)
         o[i] = (uint64_t)((((unsigned __int128)hi[i] << 64) | lo[i]) % q);
 }
+static void ref_reduce_centered(uint64_t *o, uint64_t *a, uint64_t q_in, uint64_t n, uint64_t q)
+{
+    for (uint64_t i = 0; i < n; i++)
+    {
+        const int64_t d = a[i] > q_in / 2 ? (int64_t)a[i] - (int64_t)q_in : (int64_t)a[i];
+        o[i] = d < 0 ? (q - (uint64_t)(-d) % q) % q : (uint64_t)d % q;
+    }
+}
 
 /* ---- kernels vs oracles for one prime ---- */
 
@@ -261,6 +269,73 @@ void test_mod_eltwise_sweep_with_a_tail(void)
             check_ops(bits[i], lengths[j]);
 }
 
+/* Residues mod q_in, starting with the ones either side of q_in / 2, where the
+   centered representative changes sign, and repeating them across the lanes
+   of the first vectors. */
+static void fill_residues(uint64_t *x, uint64_t q_in, uint64_t n)
+{
+    const uint64_t edges[] = {0, 1, (q_in - 1) / 2, (q_in + 1) / 2, q_in - 2, q_in - 1};
+    for (uint64_t i = 0; i < n; i++)
+        x[i] = i < 64 ? edges[i % 6] : (0x9E3779B97F4A7C15ULL * (i + 1)) % q_in;
+}
+
+/* Every source prime against every destination prime, the same prime
+   included, at both the vectorized and the scalar lengths, and through the
+   narrow-row entry points wherever one of the two primes is narrow. */
+void test_mod_eltwise_reduce_centered(void)
+{
+    const uint64_t bits[] = {10, 20, 29, 31, 42, 49, 50, 60, 61};
+    const uint64_t lengths[] = {1, 7, 8, 15, 64, 1024};
+    const unsigned nb = sizeof(bits) / sizeof(*bits);
+
+    for (unsigned bi = 0; bi < nb; bi++)
+    {
+        const uint64_t q_in = next_special_prime(1ULL << bits[bi], 1024, true);
+        for (unsigned bo = 0; bo < nb; bo++)
+        {
+            const uint64_t q = next_special_prime(1ULL << bits[bo], 1024, true);
+            Modulus mod = mod_new(q);
+            for (unsigned li = 0; li < sizeof(lengths) / sizeof(*lengths); li++)
+            {
+                const uint64_t n = lengths[li];
+                uint64_t *x = safe_aligned_malloc(n * sizeof(uint64_t));
+                uint64_t *out = safe_aligned_malloc(n * sizeof(uint64_t));
+                uint64_t *ref = safe_aligned_malloc(n * sizeof(uint64_t));
+                uint32_t *x32 = safe_aligned_malloc(n * sizeof(uint32_t));
+                uint32_t *out32 = safe_aligned_malloc(n * sizeof(uint32_t));
+
+                fill_residues(x, q_in, n);
+                ref_reduce_centered(ref, x, q_in, n, q);
+                mod_eltwise_reduce_centered(out, x, q_in, n, mod);
+                TEST_ASSERT_EQUAL_UINT64_ARRAY(ref, out, n);
+
+                const bool narrow_in = rns_prime_is_narrow(q_in),
+                           narrow_out = rns_prime_is_narrow(q);
+                if (narrow_in)
+                    for (uint64_t i = 0; i < n; i++)
+                        x32[i] = (uint32_t)x[i];
+                if (narrow_in && narrow_out)
+                    mod_eltwise_reduce_centered_w32(out32, x32, q_in, n, mod);
+                else if (narrow_out)
+                    mod_eltwise_reduce_centered_narrow_from_wide(out32, x, q_in, n, mod);
+                else if (narrow_in)
+                    mod_eltwise_reduce_centered_wide_from_narrow(out, x32, q_in, n, mod);
+                if (narrow_out)
+                    for (uint64_t i = 0; i < n; i++)
+                        out[i] = out32[i];
+                TEST_ASSERT_EQUAL_UINT64_ARRAY(ref, out, n);
+
+                free(x);
+                free(out);
+                free(ref);
+                free(x32);
+                free(out32);
+            }
+            mod_free(mod);
+        }
+    }
+}
+
 /* ---- the family the element-wise dispatchers pick ---- */
 
 #if VFHE_HAVE_AVX512IFMA
@@ -337,6 +412,44 @@ void test_mod_eltwise_families_agree_where_they_overlap(void)
         free(first);
         mod_free(mod);
     }
+}
+
+typedef void (*eltwise_centered_fn)(uint64_t *, uint64_t *, uint64_t, uint64_t, Modulus);
+
+void test_mod_eltwise_reduce_centered_families_agree(void)
+{
+    const uint64_t shifts[] = {MOD_SHIFT_32, MOD_SHIFT_50, MOD_SHIFT_64};
+    const eltwise_centered_fn fns[] = {mod_eltwise_reduce_centered_32,
+                                       mod_eltwise_reduce_centered_50,
+                                       mod_eltwise_reduce_centered_64};
+    const uint64_t bits[] = {10, 20, 29, 30, 31, 49, 50, 60, 61};
+    const uint64_t n = 128;
+    uint64_t *x = safe_aligned_malloc(n * sizeof(uint64_t));
+    uint64_t *out = safe_aligned_malloc(n * sizeof(uint64_t));
+    uint64_t *ref = safe_aligned_malloc(n * sizeof(uint64_t));
+
+    for (unsigned bi = 0; bi < sizeof(bits) / sizeof(*bits); bi++)
+    {
+        const uint64_t q_in = next_special_prime(1ULL << bits[bi], 1024, true);
+        fill_residues(x, q_in, n);
+        for (unsigned bo = 0; bo < sizeof(bits) / sizeof(*bits); bo++)
+        {
+            const uint64_t q = next_special_prime(1ULL << bits[bo], 1024, true);
+            Modulus mod = mod_new(q);
+            ref_reduce_centered(ref, x, q_in, n, q);
+            for (unsigned k = 0; k < sizeof(shifts) / sizeof(*shifts); k++)
+            {
+                if (!family_admits(q, shifts[k]))
+                    continue;
+                fns[k](out, x, q_in, n, mod);
+                TEST_ASSERT_EQUAL_UINT64_ARRAY(ref, out, n);
+            }
+            mod_free(mod);
+        }
+    }
+    free(x);
+    free(out);
+    free(ref);
 }
 #endif
 
@@ -604,8 +717,10 @@ int main(void)
     RUN_TEST(test_mod_eltwise_sweep_scalar_path);
     RUN_TEST(test_mod_eltwise_sweep_with_a_tail);
     RUN_TEST(test_mod_new_refuses_a_modulus_no_family_can_hold);
+    RUN_TEST(test_mod_eltwise_reduce_centered);
 #if VFHE_HAVE_AVX512IFMA
     RUN_TEST(test_mod_eltwise_families_agree_where_they_overlap);
+    RUN_TEST(test_mod_eltwise_reduce_centered_families_agree);
 #endif
     RUN_TEST(test_mod_eltwise_w32_matches_the_wide_kernels);
     RUN_TEST(test_mod_eltwise_w32_at_the_range_edges);

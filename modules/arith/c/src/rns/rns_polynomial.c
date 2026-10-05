@@ -1135,6 +1135,26 @@ void polynomial_RNSc_mod_reduce_lifted(RNSc_Polynomial out, RNSc_Polynomial in, 
     }
 }
 
+void polynomial_RNSc_mod_reduce_lifted_centered(RNSc_Polynomial out, RNSc_Polynomial in,
+                                                uint64_t idx)
+{
+    const uint64_t q_in = in->base->mods[idx]->q;
+    for (size_t i = 0; i < out->base->l; i++)
+    {
+        if (!(out->rns_mask & (1ULL << i)))
+            continue;
+        if (i == idx)
+        {
+            if (out->rows64[i] != in->rows64[idx] || out->rows32[i] != in->rows32[idx])
+                RNS_ROW_COPY(out, in, i, out->base->N);
+        }
+        else
+        {
+            RNS_ROW_REDUCE_CENTERED(out, in, i, idx, out->base->N, q_in, out->base->mods[i]);
+        }
+    }
+}
+
 void polynomial_RNSc_mod_reduce(RNSc_Polynomial out, RNSc_Polynomial in)
 {
     for (size_t i = 0; i < out->base->l; i++)

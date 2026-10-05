@@ -168,6 +168,30 @@ static void w32_reduce_scalar(uint32_t *out, const uint32_t *in, uint64_t n, Mod
         out[i] = (uint32_t)modq(in[i], mod);
 }
 
+static void w32_reduce_centered_scalar(uint32_t *out, const uint32_t *in, uint64_t q_in, uint64_t n,
+                                       Modulus mod)
+{
+    const uint64_t half = q_in >> 1, neg_q_in = negate_modq(modq(q_in, mod), mod->q);
+    for (uint64_t i = 0; i < n; i++)
+        out[i] = (uint32_t)reduce_centered_modq(in[i], half, neg_q_in, mod);
+}
+
+static void w32_reduce_centered_from_wide_scalar(uint32_t *out, const uint64_t *in, uint64_t q_in,
+                                                 uint64_t n, Modulus mod)
+{
+    const uint64_t half = q_in >> 1, neg_q_in = negate_modq(modq(q_in, mod), mod->q);
+    for (uint64_t i = 0; i < n; i++)
+        out[i] = (uint32_t)reduce_centered_modq(in[i], half, neg_q_in, mod);
+}
+
+static void w32_reduce_centered_to_wide_scalar(uint64_t *out, const uint32_t *in, uint64_t q_in,
+                                               uint64_t n, Modulus mod)
+{
+    const uint64_t half = q_in >> 1, neg_q_in = negate_modq(modq(q_in, mod), mod->q);
+    for (uint64_t i = 0; i < n; i++)
+        out[i] = reduce_centered_modq(in[i], half, neg_q_in, mod);
+}
+
 #if VFHE_HAVE_AVX512IFMA
 
 // The high 64 bits of a 64x64 product, minus the lo*lo partial: at most 1 too
@@ -461,6 +485,55 @@ static void w32_reduce_vec(uint32_t *out, const uint32_t *in, uint64_t n, Modulu
     }
 }
 
+#define W32_CENTERED_LOCALS(q_in)                                                                  \
+    const __m512i half = _mm512_set1_epi64((long long)((q_in) >> 1));                              \
+    const __m512i neg_q_in = _mm512_set1_epi64((long long)negate_modq(modq((q_in), mod), mod->q))
+
+static inline __m512i w32_reduce_centered_word8(__m512i v, __m512i half, __m512i neg_q_in,
+                                                __m512i q64, __m512i barr_lo, unsigned prs)
+{
+    return w32_reduce_word8(centered_shift(v, half, neg_q_in), q64, barr_lo, prs);
+}
+
+static void w32_reduce_centered_vec(uint32_t *out, const uint32_t *in, uint64_t q_in, uint64_t n,
+                                    Modulus mod)
+{
+    W32_LOCALS;
+    W32_CENTERED_LOCALS(q_in);
+    for (uint64_t i = 0; i < n / 8; i++)
+    {
+        const __m512i v = _mm512_cvtepu32_epi64(_mm256_loadu_si256((const __m256i *)(in + 8 * i)));
+        const __m512i r = w32_reduce_centered_word8(v, half, neg_q_in, q64, barr_lo, prs);
+        _mm256_storeu_si256((__m256i *)(out + 8 * i), _mm512_cvtepi64_epi32(r));
+    }
+}
+
+static void w32_reduce_centered_from_wide_vec(uint32_t *out, const uint64_t *in, uint64_t q_in,
+                                              uint64_t n, Modulus mod)
+{
+    W32_LOCALS;
+    W32_CENTERED_LOCALS(q_in);
+    for (uint64_t i = 0; i < n / 8; i++)
+    {
+        const __m512i v = _mm512_loadu_si512((const __m512i *)in + i);
+        const __m512i r = w32_reduce_centered_word8(v, half, neg_q_in, q64, barr_lo, prs);
+        _mm256_storeu_si256((__m256i *)(out + 8 * i), _mm512_cvtepi64_epi32(r));
+    }
+}
+
+static void w32_reduce_centered_to_wide_vec(uint64_t *out, const uint32_t *in, uint64_t q_in,
+                                            uint64_t n, Modulus mod)
+{
+    W32_LOCALS;
+    W32_CENTERED_LOCALS(q_in);
+    for (uint64_t i = 0; i < n / 8; i++)
+    {
+        const __m512i v = _mm512_cvtepu32_epi64(_mm256_loadu_si256((const __m256i *)(in + 8 * i)));
+        _mm512_storeu_si512((__m512i *)out + i,
+                            w32_reduce_centered_word8(v, half, neg_q_in, q64, barr_lo, prs));
+    }
+}
+
 #endif // VFHE_HAVE_AVX512IFMA
 
 /* --- entry points: the vector body on the longest prefix of whole lane groups, the scalar body
@@ -594,4 +667,28 @@ void mod_eltwise_reduce_wide_from_narrow(uint64_t *out, uint32_t *in, uint64_t n
     const uint64_t h = W32_HEAD(n, 8);
     W32_VEC(h, w32_reduce_to_wide_vec(out, in, h, mod));
     w32_reduce_to_wide_scalar(out + h, in + h, n - h, mod);
+}
+
+void mod_eltwise_reduce_centered_w32(uint32_t *out, uint32_t *in, uint64_t q_in, uint64_t n,
+                                     Modulus mod)
+{
+    const uint64_t h = W32_HEAD(n, 8);
+    W32_VEC(h, w32_reduce_centered_vec(out, in, q_in, h, mod));
+    w32_reduce_centered_scalar(out + h, in + h, q_in, n - h, mod);
+}
+
+void mod_eltwise_reduce_centered_narrow_from_wide(uint32_t *out, uint64_t *in, uint64_t q_in,
+                                                  uint64_t n, Modulus mod)
+{
+    const uint64_t h = W32_HEAD(n, 8);
+    W32_VEC(h, w32_reduce_centered_from_wide_vec(out, in, q_in, h, mod));
+    w32_reduce_centered_from_wide_scalar(out + h, in + h, q_in, n - h, mod);
+}
+
+void mod_eltwise_reduce_centered_wide_from_narrow(uint64_t *out, uint32_t *in, uint64_t q_in,
+                                                  uint64_t n, Modulus mod)
+{
+    const uint64_t h = W32_HEAD(n, 8);
+    W32_VEC(h, w32_reduce_centered_to_wide_vec(out, in, q_in, h, mod));
+    w32_reduce_centered_to_wide_scalar(out + h, in + h, q_in, n - h, mod);
 }

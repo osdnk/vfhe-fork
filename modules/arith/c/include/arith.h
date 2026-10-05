@@ -248,6 +248,10 @@ void ntt_free_precompute(uint64_t **ws, uint64_t **w_precon, uint64_t n);
     void mod_eltwise_sub(uint64_t *out, uint64_t *in1, uint64_t *in2, uint64_t n, Modulus mod);
     void mod_eltwise_reduce(uint64_t *out, uint64_t *in, uint64_t n, Modulus mod);
     void mod_eltwise_reduce_signed(uint64_t *out, int64_t *in, uint64_t n, Modulus mod);
+    // `in` holds residues mod q_in, in [0, q_in); each is read as its centered
+    // representative, in (-q_in/2, q_in/2], and reduced mod q.
+    void mod_eltwise_reduce_centered(uint64_t *out, uint64_t *in, uint64_t q_in, uint64_t n,
+                                     Modulus mod);
     void mod_reduce_array_mp(uint64_t *out, uint64_t *in_high, uint64_t *in_low, uint64_t n,
                              Modulus mod);
 
@@ -949,6 +953,10 @@ void ntt_free_precompute(uint64_t **ws, uint64_t **w_precon, uint64_t n);
     void polynomial_multo_RNS_polynomial(RNS_Polynomial out, RNS_Polynomial in);
     int polynomial_RNS_inverse(RNS_Polynomial out, RNS_Polynomial in);
     void polynomial_RNSc_mod_reduce_lifted(RNSc_Polynomial out, RNSc_Polynomial in, uint64_t idx);
+    /* The same lift of the centered representative d in (-p_idx/2, p_idx/2]:
+       still x mod p_idx, with E[d^2] = p_idx^2/12 against p_idx^2/3. */
+    void polynomial_RNSc_mod_reduce_lifted_centered(RNSc_Polynomial out, RNSc_Polynomial in,
+                                                    uint64_t idx);
     /* Digit `level` of residue `idx` of `in`, in base 2^log_base, written to
        every active row of `out`.
        `in` is in the coefficient domain and its row `idx` must be active; the

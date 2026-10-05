@@ -11,6 +11,10 @@
 // decomposes against a different gadget, or none. The signatures stay generic
 // so the key switch in mlwe.c can call it without knowing any of that.
 //
+// The RNS gadget's digit is the centered residue, in (-p_j/2, p_j/2]: the
+// same value mod p_j, so the sum stays exact, at a quarter of the second
+// moment of [0, p_j) -- which is what the accumulated noise grows with.
+//
 // A non-zero `log_base` asks for the radix gadget instead: every residue is
 // further split into base-2^log_base digits, so the decomposition of x is
 //
@@ -38,14 +42,15 @@ uint64_t gadget_radix_digits(uint64_t prime, uint64_t log_base)
 }
 
 // Digit `d` of residue `j` of `source`, lifted to `tmp`'s ring: the whole
-// residue for the RNS gadget, one base-2^log_base digit of it for the radix one.
+// residue, centered, for the RNS gadget, one base-2^log_base digit of it for
+// the radix one.
 static void gadget_digit(RNSc_Polynomial tmp, RNSc_Polynomial source, size_t j, uint64_t log_base,
                          uint64_t d)
 {
     if (log_base)
         polynomial_RNSc_decompose_digit(tmp, source, j, log_base, d);
     else
-        polynomial_RNSc_mod_reduce_lifted(tmp, source, j);
+        polynomial_RNSc_mod_reduce_lifted_centered(tmp, source, j);
 }
 
 static uint64_t gadget_digits_of(RNS_Base base, size_t j, uint64_t log_base)
@@ -74,8 +79,8 @@ static void gadget_mul_accumulate(RNS_MLWE out, RNS_MLWE *ksk, const ArithElemen
         if (!(mask & (1ULL << j)))
             continue;
         // The j-th residue lifted to the key's ring, then transformed so the
-        // multiply below is pointwise -- as one piece for the RNS gadget, or
-        // one digit at a time for the radix one.
+        // multiply below is pointwise -- as one centered piece for the RNS
+        // gadget, or one digit at a time for the radix one.
         const uint64_t digits = gadget_digits_of(key->base, j, log_base);
         for (uint64_t d = 0; d < digits; d++)
         {

@@ -281,14 +281,14 @@ extern "C"
     // digits. `ksk` only fixes the key ring and the gadget, so any key array
     // with both will do.
     void gadget_decompose(GadgetDigits *out, RNS_MLWE *ksk, const ArithElement *poly,
-                          uint64_t log_base);
+                          uint64_t log_base, bool balanced);
     void gadget_digits_free(GadgetDigits *digits);
     // Digit `i` (in key order) of the same decomposition, for a caller that
     // computes the digits in parallel: written into `out`, an element of the
     // key ring, in the domain gadget_decompose leaves them in. Reads `ksk` and
     // `poly` only.
     void gadget_decompose_digit(ArithElement *out, RNS_MLWE *ksk, const ArithElement *poly,
-                                uint64_t i, uint64_t log_base);
+                                uint64_t i, uint64_t log_base, bool balanced);
     // out -= sum_i Aut_gen(digit_i) * ksk[i]: the gadget product of
     // Aut_gen(poly), because permuted digits are a valid decomposition of the
     // permuted element (equal to decomposing Aut_gen(poly) up to the choice of

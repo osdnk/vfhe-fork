@@ -59,6 +59,7 @@ typedef struct
     ArithRing ring, key_ring; // the accumulator's, and the keys'
     RNS_MLWE *const *bk;
     uint64_t r, ell, log_base;
+    bool balanced;
     uint64_t components; // r + 1
     uint64_t digits;     // components * ell
     uint64_t chunks;     // the digit sum of an inner product is split into this many tasks
@@ -161,7 +162,7 @@ static void decompose_accumulator(Rotation *R, const Step *S, uint64_t t, ArithE
             arith_mul_by_monomial(R->ring, rotated, source, S->exponent[0], 1);
             source = rotated;
         }
-        gadget_decompose_digit(&R->digit[t], R->bk[0], source, d, R->log_base);
+        gadget_decompose_digit(&R->digit[t], R->bk[0], source, d, R->log_base, R->balanced);
         return;
     }
     const uint64_t j = t - R->digits;
@@ -279,7 +280,8 @@ static void rotation_worker(void *ctx, uint64_t item)
 }
 
 static void rotate(RNSc_MLWE acc, const uint64_t *a, uint64_t n, RNS_MLWE *const *bk,
-                   uint64_t unfolding, uint64_t ell, uint64_t log_base, uint64_t threads)
+                   uint64_t unfolding, uint64_t ell, uint64_t log_base, bool balanced,
+                   uint64_t threads)
 {
     if (n == 0)
         return;
@@ -291,6 +293,7 @@ static void rotate(RNSc_MLWE acc, const uint64_t *a, uint64_t n, RNS_MLWE *const
     R.r = acc->r;
     R.ell = ell;
     R.log_base = log_base;
+    R.balanced = balanced;
     R.components = R.r + 1;
     R.digits = R.components * ell;
     prepare_steps(&R, a, n, unfolding);
@@ -360,9 +363,11 @@ static void rotate(RNSc_MLWE acc, const uint64_t *a, uint64_t n, RNS_MLWE *const
 }
 
 void cggi16_blind_rotate(RNSc_MLWE acc, const uint64_t *a, uint64_t n, RNS_MLWE *const *bk,
-                         uint64_t unfolding, uint64_t ell, uint64_t log_base, uint64_t n_threads)
+                         uint64_t unfolding, uint64_t ell, uint64_t log_base, bool balanced,
+                         uint64_t n_threads)
 {
-    rotate(acc, a, n, bk, unfolding, ell, log_base, vfhe_threads_for(n_threads, UINT64_MAX));
+    rotate(acc, a, n, bk, unfolding, ell, log_base, balanced,
+           vfhe_threads_for(n_threads, UINT64_MAX));
 }
 
 typedef struct
@@ -370,19 +375,21 @@ typedef struct
     RNSc_MLWE *acc;
     const uint64_t *a;
     uint64_t n, unfolding, ell, log_base;
+    bool balanced;
     RNS_MLWE *const *bk;
 } Batch;
 
 static void rotate_one_of_batch(void *ctx, uint64_t k)
 {
     const Batch *B = (const Batch *)ctx;
-    rotate(B->acc[k], B->a + k * B->n, B->n, B->bk, B->unfolding, B->ell, B->log_base, 1);
+    rotate(B->acc[k], B->a + k * B->n, B->n, B->bk, B->unfolding, B->ell, B->log_base, B->balanced,
+           1);
 }
 
 void cggi16_blind_rotate_batch(RNSc_MLWE *acc, const uint64_t *a, uint64_t count, uint64_t n,
                                RNS_MLWE *const *bk, uint64_t unfolding, uint64_t ell,
-                               uint64_t log_base, uint64_t n_threads)
+                               uint64_t log_base, bool balanced, uint64_t n_threads)
 {
-    Batch B = {acc, a, n, unfolding, ell, log_base, bk};
+    Batch B = {acc, a, n, unfolding, ell, log_base, balanced, bk};
     vfhe_parallel_for(count, n_threads, rotate_one_of_batch, &B);
 }

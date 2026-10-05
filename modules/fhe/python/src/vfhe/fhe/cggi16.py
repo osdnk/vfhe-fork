@@ -148,6 +148,7 @@ class CGGI16:
             bk.unfolding,
             first.gadget_size,
             first.scheme.radix_log_base or 0,
+            first.scheme.balanced,
         )
 
     def functional_bootstrap_wo_extract(

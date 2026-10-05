@@ -245,16 +245,21 @@ versions may contain breaking changes.
   `balanced`. The two digits agree modulo `p_j`, so the decomposition stays
   exact and the keys are the same, and the centered one has a quarter of the
   second moment, which is what the gadget products' noise grows with. Key
-  switches, automorphisms, relinearization, MGSW external products and CMUX,
-  and the LWE packing key switch, all over the RNS gadget, add about one bit
-  less noise standard deviation at the same cost: at N = 2048 over five
+  switches, automorphisms (hoisted ones included), relinearization, MGSW
+  external products and CMUX, the CGGI16 blind rotation and the LWE packing
+  key switch, all over the RNS gadget, add about one bit less noise standard
+  deviation at the same cost: at N = 2048 over five
   42-bit primes, a GHS key switch's goes from 2^7.4 to 2^6.4, and a BV
   external product's from 2^49.9 to 2^49.0. Their output ciphertexts change;
   what they decrypt to does not, and `balanced=False` gives the previous
-  outputs bit for bit. The radix gadget (`radix_log_base`) is unchanged. In
-  C, a key-switch key carries the choice (`mlwe_new_RNS_ks_key` takes
-  `balanced`), and `gadget_mul_*`, `mgsw_*` and `gp25_*` take it as an
-  argument. The digit is the new `polynomial_RNSc_mod_reduce_lifted_centered`,
+  outputs bit for bit. With balanced digits, `MLWE_Scheme.automorphisms`
+  gives the same ciphertexts as `automorphism`: negating a centered digit
+  gives the centered digit of the negation. The radix gadget
+  (`radix_log_base`) is unchanged. `vfhe.io` records the choice with schemes,
+  MGSW schemes and key-switch keys. In C, a key-switch key carries the choice
+  (`mlwe_new_RNS_ks_key` takes `balanced`), and `gadget_mul_*`,
+  `gadget_decompose*`, `mgsw_*`, `gp25_*` and `cggi16_blind_rotate*` take it
+  as an argument. The digit is the new `polynomial_RNSc_mod_reduce_lifted_centered`,
   one fused pass per prime at the cost of the `[0, p_j)` lift, which
   `polynomial_RNSc_mod_reduce_lifted` still gives.
 

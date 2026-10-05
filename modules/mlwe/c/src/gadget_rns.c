@@ -118,7 +118,8 @@ void gadget_mul_subto_polynomial(RNS_MLWE out, RNS_MLWE *ksk, const ArithElement
 // Digits stay in the mul domain on a fully split ring, where an automorphism
 // just permutes them; otherwise they stay canonical, and each product
 // transforms its permuted copy.
-void gadget_decompose(GadgetDigits *out, RNS_MLWE *ksk, const ArithElement *poly, uint64_t log_base)
+void gadget_decompose(GadgetDigits *out, RNS_MLWE *ksk, const ArithElement *poly, uint64_t log_base,
+                      bool balanced)
 {
     RNS_Polynomial source = arith_rns_polynomial(poly);
     RNS_Polynomial key = arith_rns_polynomial(&ksk[0]->b);
@@ -145,7 +146,7 @@ void gadget_decompose(GadgetDigits *out, RNS_MLWE *ksk, const ArithElement *poly
         {
             RNSc_Polynomial digit =
                 (RNSc_Polynomial)polynomial_new_RNS_polynomial(base->N, key->rns_mask, base);
-            gadget_digit(digit, (RNSc_Polynomial)source, j, log_base, d, true);
+            gadget_digit(digit, (RNSc_Polynomial)source, j, log_base, d, balanced);
             if (mul_domain)
                 polynomial_RNSc_to_RNS((RNS_Polynomial)digit, digit);
             out->digit[i].handle = digit;
@@ -155,7 +156,7 @@ void gadget_decompose(GadgetDigits *out, RNS_MLWE *ksk, const ArithElement *poly
 }
 
 void gadget_decompose_digit(ArithElement *out, RNS_MLWE *ksk, const ArithElement *poly, uint64_t i,
-                            uint64_t log_base)
+                            uint64_t log_base, bool balanced)
 {
     RNS_Polynomial source = arith_rns_polynomial(poly);
     RNS_Base base = arith_rns_polynomial(&ksk[0]->b)->base;
@@ -168,7 +169,7 @@ void gadget_decompose_digit(ArithElement *out, RNS_MLWE *ksk, const ArithElement
         const uint64_t digits = gadget_digits_of(base, j, log_base);
         if (i < digits)
         {
-            gadget_digit(digit, (RNSc_Polynomial)source, j, log_base, i, true);
+            gadget_digit(digit, (RNSc_Polynomial)source, j, log_base, i, balanced);
             if (mul_domain)
                 polynomial_RNSc_to_RNS((RNS_Polynomial)digit, digit);
             out->domain = mul_domain ? ARITH_DOMAIN_MUL : ARITH_DOMAIN_CANONICAL;

@@ -304,7 +304,10 @@ def test_gadget_products_decrypt_with_either_digit(balanced, special_primes):
 
     mgsw_scheme = MGSW_Scheme(scheme)
     one = mgsw_scheme.encrypt(Polynomial(Rp).from_array(ONE), key)
-    assert scheme.linear_decrypt(one.external_product(c[0]), key).round_division(Rp) == m[0]
+    assert (
+        scheme.linear_decrypt(one.external_product(c[0]), key).round_division(Rp)
+        == m[0]
+    )
     for bit in (0, 1):
         selector = mgsw_scheme.encrypt(
             Polynomial(Rp).from_array([bit] + [0] * (N - 1)), key

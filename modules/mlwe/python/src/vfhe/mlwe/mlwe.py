@@ -53,6 +53,7 @@ class MLWE_Scheme:
         special_rings: list[RNSRing] | None = None,
         max_lvl: int | None = None,
         module_rank: int = 1,
+        balanced: bool = True,
     ) -> None:
         """Create a leveled scheme in one of two initialization modes.
 
@@ -64,6 +65,12 @@ class MLWE_Scheme:
           (required when ``special_primes > 0``; defaults to ``rings``
           otherwise). This allows non-nested level rings, e.g. for rational
           rescaling.
+
+        ``balanced`` decomposes against the RNS gadget into centered digits, in
+        ``(-p_j/2, p_j/2]``, rather than into residues in ``[0, p_j)``. The keys
+        are the same either way, and the centered digits add about one bit less
+        noise standard deviation at the same cost. The key-switch keys the
+        scheme generates carry the choice, and :class:`MGSW_Scheme` follows it.
         """
         first = rings if isinstance(rings, ArithParent) else rings[0]
         first.require(Capability.QUOTIENT_POLY_RING | Capability.TOWER)
@@ -100,6 +107,7 @@ class MLWE_Scheme:
             self.special_rings = [special_rings[i] for i in range(max_lvl)]
 
         self.r = module_rank
+        self.balanced = balanced
         self.N = self.rings[0].N
         self.ell = len(self.rings)
         self.max_lvl = max_lvl
@@ -271,6 +279,7 @@ class MLWE_Scheme:
         return MLWE_Set(
             self._gen_ksk_components(key_out, key_poly, lvl, radix_log_base),
             radix_log_base,
+            self.balanced,
         )
 
     def gen_rlk_for_level(
@@ -284,7 +293,7 @@ class MLWE_Scheme:
         # followed by r NULL slots for the linear components, which keep the
         # target key and are copied through by the key-switch.
         components = self._gen_ksk_components(key_out, quad_polys, lvl, radix_log_base)
-        return MLWE_Set(components + [None] * self.r, radix_log_base)
+        return MLWE_Set(components + [None] * self.r, radix_log_base, self.balanced)
 
     def quadratic_key_polys(self, key: MLWE_Key) -> list[RNSPolynomial]:
         """The quadratic key terms of the tensored product, in slot order.
@@ -918,12 +927,14 @@ class MLWE_Set:
         self,
         mlwe: Sequence[list[MLWE] | None] | None = None,
         radix_log_base: int | None = None,
+        balanced: bool = True,
     ):
         """Wrap per-component gadget key arrays into a native key-switch key.
 
         ``radix_log_base`` is the gadget the arrays were generated against (see
         :meth:`MLWE_Scheme.gadget_scalars`); it travels with the key, since a
-        key switch has to decompose against the same one.
+        key switch has to decompose against the same one. ``balanced`` is the
+        RNS gadget's digit the key switch takes (see :class:`MLWE_Scheme`).
 
         The key uses the samples in place, converted to the NTT domain: the
         set keeps them in `mlwe`, and they must not be modified afterwards.
@@ -951,8 +962,9 @@ class MLWE_Set:
         # The key object copies the component-pointer array and carries the
         # accumulator the key switch computes in, allocated in the key's ring.
         self.log_base = radix_log_base or 0
+        self.balanced = balanced
         self.obj = lib_rlwe.lib.mlwe_new_RNS_ks_key(
-            result_obj, len(mlwe), self.log_base
+            result_obj, len(mlwe), self.log_base, balanced
         )
 
     def __del__(self) -> None:
@@ -968,6 +980,7 @@ class MLWE_Set:
         out.mlwe = []
         out.dim = array[0].dim + 1
         out.log_base = array[0].log_base
+        out.balanced = array[0].balanced
         result_obj = ffi.new("void*[]", len(array))
         out._children = array  # type: ignore  # keep child MLWE_Set buffers alive
         for j in range(len(array)):

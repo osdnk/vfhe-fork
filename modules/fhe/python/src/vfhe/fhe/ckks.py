@@ -27,19 +27,22 @@ class CKKS_Scheme(MLWE_Scheme):
         module_rank: int = 1,
         special_primes: int = 0,
         special_rings: list[RNSRing] | None = None,
+        balanced: bool = True,
     ):
         """Create a CKKS scheme.
 
         ``rings`` is either a single :class:`RNSRing` (the level chain is derived
         automatically) or an explicit list of per-level rings paired with
         ``special_rings`` when ``special_primes > 0`` -- e.g. non-nested levels
-        for rational rescaling. See :class:`MLWE_Scheme` for both modes.
+        for rational rescaling. See :class:`MLWE_Scheme` for both modes, and
+        for ``balanced``.
         """
         super().__init__(
             rings,
             special_primes=special_primes,
             special_rings=special_rings,
             module_rank=module_rank,
+            balanced=balanced,
         )
         self.scaling_factor = scaling_factor
         self.complex_ring = ComplexRing(self.ring.N // 2, True)

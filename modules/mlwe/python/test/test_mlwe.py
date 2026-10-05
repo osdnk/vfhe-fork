@@ -8,7 +8,9 @@ MGSW external product, and the LWE surface. Noise is stripped with
 round_division back to the plaintext ring, so equality is exact.
 """
 
+import functools
 import math
+import operator
 import random
 from typing import cast
 
@@ -18,7 +20,7 @@ from vfhe.arith import Polynomial, Ring
 from vfhe.arith.number_theory import crt
 from vfhe.crypto import entropy
 from vfhe.engine import ffi
-from vfhe.mlwe import CMUX, LWE, LWE_Key, MGSW_Scheme, MLWE_Scheme, MLWE_Set
+from vfhe.mlwe import CMUX, LWE, MGSW, LWE_Key, MGSW_Scheme, MLWE_Scheme, MLWE_Set
 
 N = 256
 
@@ -181,56 +183,194 @@ def test_mgsw_cmux(bv, bit):
 
 # --- the RNS gadget's digit -------------------------------------------------
 #
-# Without special primes a key switch adds exactly -sum_j d_j * e_j to the
-# linear decryption, and an external product by an encryption of 1 adds
-# sum_j d_j * e_j over all r + 1 components, so the added noise has variance
-# components * N * sigma^2 * sum_j E[d_j^2]. A centered digit has
-# E[d_j^2] = (p_j^2 - 1) / 12; one in [0, p_j) has about p_j^2 / 3, a bit more
-# standard deviation. The bound is a quarter of that bit.
+# `balanced`, on by default, takes residue j centered, in (-p_j/2, p_j/2];
+# off, it takes it as stored, in [0, p_j). Both are x mod p_j, so the keys are
+# the same either way. Without special primes a key switch adds exactly
+# -sum_j d_j * e_j to the linear decryption, and an external product by an
+# encryption of 1 adds sum_j d_j * e_j over all r + 1 components, so the added
+# noise has variance components * N * sigma^2 * sum_j E[d_j^2]: (p_j^2 - 1) / 12
+# for a centered digit, about p_j^2 / 3 for the other, one bit more standard
+# deviation.
 SIGMA = 3.2
+ONE = [1] + [0] * (N - 1)
 
 
-def _added_noise(scheme, Rp, key, key_out, operation):
-    """log2 of the std of what ``operation`` adds to the linear decryption."""
-    diffs = []
-    for _ in range(8):
-        c = enc(scheme, Rp, Rp.random_element(), key)
-        before = scheme.linear_decrypt(c, key)
-        after = scheme.linear_decrypt(operation(c), key_out)
-        before.to_coeff()
-        after.to_coeff()
-        diffs += (after - before).get_polynomial(signed=True)
-    return 0.5 * math.log2(sum(d * d for d in diffs) / len(diffs))
+def test_balanced_is_the_default(bv):
+    Rq, _Rp, scheme = bv
+    key = scheme.key_gen_sparse(N // 8, SIGMA)
+    assert scheme.balanced
+    assert cast("MLWE_Set", scheme.gen_ksk(key, key, lvl=0)).balanced
+    assert cast("MLWE_Set", scheme.gen_rlk(key, key, lvl=0)).balanced
+    assert MGSW_Scheme(scheme).balanced
+
+    plain = MLWE_Scheme(Rq, balanced=False)
+    key = plain.key_gen_sparse(N // 8, SIGMA)
+    assert not cast("MLWE_Set", plain.gen_ksk(key, key, lvl=0)).balanced
+    assert not cast("MLWE_Set", plain.gen_rlk(key, key, lvl=0)).balanced
+    assert not MGSW_Scheme(plain).balanced
+    assert MGSW_Scheme(plain, balanced=True).balanced
 
 
-def _assert_centered_digit_noise(measured, primes, components):
-    def log2_std(second_moment):
-        variance = components * N * SIGMA**2 * sum(second_moment(p) for p in primes)
-        return 0.5 * math.log2(variance)
+def _digits(poly, ring, balanced):
+    """The RNS gadget's digits of ``poly``, in the order it takes them, in ``ring``."""
+    poly.to_coeff()
+    residues = sorted(
+        zip(
+            poly.ring.prime_indices,
+            poly.ring.primes,
+            poly.get_coeff_matrix(),
+            strict=True,
+        )
+    )
+    return [
+        Polynomial(ring).from_bigint_array(
+            [r - p if balanced and r > p // 2 else r for r in row]
+        )
+        for _, p, row in residues
+    ]
 
-    assert abs(measured - log2_std(lambda p: (p * p - 1) / 12)) < 0.25
-    assert log2_std(lambda p: (p - 1) * (2 * p - 1) / 6) - measured > 0.75
+
+def _gadget_product(keys, polys, balanced):
+    """``sum_i sum_j d_j(polys[i]) * keys[i][j]``, as its ``a`` and ``b``."""
+    products = [
+        (d * k.get_a_poly(0), d * k.get_b_poly())
+        for row, poly in zip(keys, polys, strict=True)
+        for d, k in zip(_digits(poly, row[0].ring, balanced), row, strict=True)
+    ]
+    return [
+        functools.reduce(operator.add, terms) for terms in zip(*products, strict=True)
+    ]
 
 
-def test_keyswitch_noise_is_that_of_centered_digits(bv):
-    _Rq, Rp, scheme = bv
+def _coeffs(poly):
+    poly.to_coeff()
+    return poly.get_polynomial()
+
+
+@pytest.mark.parametrize("balanced", [False, True])
+def test_gadget_products_take_the_chosen_digit(balanced):
+    """A key switch and a CMUX, recomputed from their digits.
+
+    Without special primes nothing is rounded, so both are exactly the gadget
+    products of their digits -- with ``balanced=False``, of the ``[0, p_j)``
+    residues the RNS gadget took before it had the option.
+    """
+    _Rq, Rp, scheme = _rank_scheme(N, 1, 0, balanced=balanced)
     key = scheme.key_gen_sparse(N // 8, SIGMA)
     key_out = scheme.key_gen_sparse(N // 8, SIGMA)
-    ksk = scheme.gen_ksk(key_out, key)
-    measured = _added_noise(
-        scheme, Rp, key, key_out, lambda c: scheme.keyswitch(c, ksk)
+
+    ksk = cast("MLWE_Set", scheme.gen_ksk(key_out, key, lvl=0))
+    c = enc(scheme, Rp, Rp.random_element(), key)
+    a, b = _gadget_product([ksk.mlwe[0]], [c.get_a_poly(0)], balanced)
+    out = scheme.keyswitch(c, ksk)
+    assert _coeffs(out.get_a_poly(0)) == _coeffs(-a)
+    assert _coeffs(out.get_b_poly()) == _coeffs(c.get_b_poly() - b)
+
+    selector = MGSW_Scheme(scheme).encrypt(Polynomial(Rp).from_array(ONE), key)
+    c0, c1 = (enc(scheme, Rp, Rp.random_element(), key) for _ in range(2))
+    diff = c1 - c0
+    ell = selector.gadget_size
+    a, b = _gadget_product(
+        [selector.obj[:ell], selector.obj[ell:]],
+        [diff.get_a_poly(0), diff.get_b_poly()],
+        balanced,
     )
-    _assert_centered_digit_noise(measured, scheme.ring.primes, scheme.r)
+    out = CMUX(c0, c1, selector)
+    assert _coeffs(out.get_a_poly(0)) == _coeffs(c0.get_a_poly(0) + a)
+    assert _coeffs(out.get_b_poly()) == _coeffs(c0.get_b_poly() + b)
 
 
-def test_external_product_noise_is_that_of_centered_digits(bv):
-    _Rq, Rp, scheme = bv
+@pytest.mark.parametrize("balanced", [False, True])
+@pytest.mark.parametrize("special_primes", [0, 1])
+def test_gadget_products_decrypt_with_either_digit(balanced, special_primes):
+    Rq, Rp, scheme = _rank_scheme(N, 1, special_primes, balanced=balanced)
     key = scheme.key_gen_sparse(N // 8, SIGMA)
-    one = MGSW_Scheme(scheme).encrypt(
-        Polynomial(Rp).from_array([1] + [0] * (N - 1)), key
-    )
-    measured = _added_noise(scheme, Rp, key, key, one.external_product)
-    _assert_centered_digit_noise(measured, scheme.ring.primes, scheme.r + 1)
+    key2 = scheme.key_gen_sparse(N // 8, SIGMA)
+    m = [Rp.random_element() for _ in range(2)]
+    c = [enc(scheme, Rp, m_i, key) for m_i in m]
+
+    out = scheme.keyswitch(c[0], scheme.gen_ksk(key2, key, lvl=0))
+    assert scheme.linear_decrypt(out, key2).round_division(Rp) == m[0]
+
+    out = scheme.automorphism(c[0], 5, scheme.gen_ksk_automorphism(key, key, 5, lvl=0))
+    assert scheme.linear_decrypt(out, key).round_division(Rp) == m[0].automorphism(5)
+
+    scheme.rlk = scheme.gen_rlk(key, key)
+    t = [Polynomial(Rp).from_array(_ternary(N)) for _ in range(2)]
+    m_out = scheme.linear_decrypt(
+        enc(scheme, Rp, t[0], key) * enc(scheme, Rp, t[1], key), key
+    ).round_division(Rp)
+    assert _mul_error(Rq, Rp, scheme, m_out, t[0], t[1]) < 1000
+
+    mgsw_scheme = MGSW_Scheme(scheme)
+    one = mgsw_scheme.encrypt(Polynomial(Rp).from_array(ONE), key)
+    assert scheme.linear_decrypt(one.external_product(c[0]), key).round_division(Rp) == m[0]
+    for bit in (0, 1):
+        selector = mgsw_scheme.encrypt(
+            Polynomial(Rp).from_array([bit] + [0] * (N - 1)), key
+        )
+        out = CMUX(c[0], c[1], selector)
+        assert scheme.linear_decrypt(out, key).round_division(Rp) == m[bit]
+
+
+# The [0, p_j) digit's mean, p_j/2, adds a term the key's errors fix, which
+# moves one key's measurement by about 0.4 bits; this many keys average it out.
+KEY_SETS = 32
+
+
+def _added_noise(scheme, Rp, operations):
+    """log2 of the std of what each operation adds to the linear decryption.
+
+    ``operations(key)`` gives the key the outputs decrypt under and the
+    operations to measure, all on the same ciphertexts.
+    """
+    diffs = []
+    for _ in range(KEY_SETS):
+        key = scheme.key_gen_sparse(N // 8, SIGMA)
+        key_out, ops = operations(key)
+        c = enc(scheme, Rp, Rp.random_element(), key)
+        before = scheme.linear_decrypt(c, key)
+        before.to_coeff()
+        diffs = diffs or [[] for _ in ops]
+        for diff, op in zip(diffs, ops, strict=True):
+            after = scheme.linear_decrypt(op(c), key_out)
+            after.to_coeff()
+            diff += (after - before).get_polynomial(signed=True)
+    return [0.5 * math.log2(sum(d * d for d in diff) / len(diff)) for diff in diffs]
+
+
+def _assert_balanced_saves_a_bit(measured, primes, components):
+    balanced, plain = measured
+    variance = components * N * SIGMA**2 * sum((p * p - 1) / 12 for p in primes)
+    assert abs(balanced - 0.5 * math.log2(variance)) < 0.25
+    assert abs(plain - balanced - 1) < 0.4
+
+
+def test_keyswitch_noise_of_either_digit(bv):
+    _Rq, Rp, scheme = bv
+
+    def operations(key):
+        key_out = scheme.key_gen_sparse(N // 8, SIGMA)
+        ksk = scheme.gen_ksk(key_out, key, lvl=0)
+        plain = MLWE_Set(ksk.mlwe, balanced=False)
+        return key_out, [
+            functools.partial(scheme.keyswitch, ksk=k) for k in (ksk, plain)
+        ]
+
+    measured = _added_noise(scheme, Rp, operations)
+    _assert_balanced_saves_a_bit(measured, scheme.ring.primes, scheme.r)
+
+
+def test_external_product_noise_of_either_digit(bv):
+    _Rq, Rp, scheme = bv
+
+    def operations(key):
+        one = MGSW_Scheme(scheme).encrypt(Polynomial(Rp).from_array(ONE), key)
+        plain = MGSW(MGSW_Scheme(scheme, balanced=False), obj=one.obj)
+        return key, [one.external_product, plain.external_product]
+
+    measured = _added_noise(scheme, Rp, operations)
+    _assert_balanced_saves_a_bit(measured, scheme.ring.primes, scheme.r + 1)
 
 
 # Module ranks above 1, paired with a ring dimension that keeps the lattice
@@ -238,7 +378,7 @@ def test_external_product_noise_is_that_of_centered_digits(bv):
 RANK_DIMS = [(2, 128), (4, 64)]
 
 
-def _rank_scheme(N_r, r, special_primes):
+def _rank_scheme(N_r, r, special_primes, balanced=True):
     """Rank-``r`` scheme over a ring of dimension ``N_r``, plus its plaintext ring.
 
     Mirrors the ``bv``/``ghs`` fixtures: one extra top prime is added as the
@@ -247,7 +387,9 @@ def _rank_scheme(N_r, r, special_primes):
     prime_size = [45, 45, 45] + ([50] if special_primes else [])
     Rq = Ring(N_r, prime_size=prime_size, split_degree=1)
     Rp = Rq.quotient_ring(ell=1)
-    scheme = MLWE_Scheme(Rq, special_primes=special_primes, module_rank=r)
+    scheme = MLWE_Scheme(
+        Rq, special_primes=special_primes, module_rank=r, balanced=balanced
+    )
     return Rq, Rp, scheme
 
 

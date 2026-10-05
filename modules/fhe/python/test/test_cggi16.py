@@ -16,7 +16,8 @@ from vfhe.mlwe import LWE, LWE_Key, MLWE_Scheme
 
 
 @pytest.mark.complete
-def test_functional_bootstrap(deterministic_prng):
+@pytest.mark.parametrize("balanced", [False, True])
+def test_functional_bootstrap(deterministic_prng, balanced):
     # Bootstrapping is probabilistic; pin the C PRNG + Python RNG so this
     # exact-equality check is reproducible rather than flaky (seed chosen to
     # decrypt cleanly).
@@ -28,7 +29,9 @@ def test_functional_bootstrap(deterministic_prng):
     _Rp = Rq.quotient_ring(ell=1)
     in_ring = Rq.quotient_ring(ell=2)
     in_scheme = MLWE_Scheme(in_ring, special_primes=0, module_rank=1)
-    out_scheme = MLWE_Scheme(Rq, special_primes=1, module_rank=1, max_lvl=1)
+    out_scheme = MLWE_Scheme(
+        Rq, special_primes=1, module_rank=1, max_lvl=1, balanced=balanced
+    )
 
     input_key = in_scheme.key_gen_sparse(17, 3.2, ternary=False)
     input_lwe_key = input_key.extract_lwe_key()

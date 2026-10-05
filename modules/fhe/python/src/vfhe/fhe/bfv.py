@@ -86,13 +86,14 @@ class BFV_Scheme(MLWE_Scheme):
         module_rank: int = 1,
         special_primes: int = 0,
         special_rings: list[RNSRing] | None = None,
+        balanced: bool = True,
     ):
         """Create a BFV scheme.
 
         ``rings`` is either a single :class:`RNSRing` (the level chain is
         derived automatically) or an explicit list of per-level rings paired
         with ``special_rings`` when ``special_primes > 0``. See
-        :class:`MLWE_Scheme` for both modes.
+        :class:`MLWE_Scheme` for both modes, and for ``balanced``.
 
         :param plaintext_primes: How many of the ring's lowest primes make up
             the plaintext modulus ``t``.
@@ -102,6 +103,7 @@ class BFV_Scheme(MLWE_Scheme):
             special_primes=special_primes,
             special_rings=special_rings,
             module_rank=module_rank,
+            balanced=balanced,
         )
         self.plaintext_ring = self.rings[0].quotient_ring(ell=plaintext_primes)
         #: The plaintext modulus.

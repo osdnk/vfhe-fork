@@ -327,7 +327,7 @@ MLWE_Hoisted mlwe_hoist(RNSc_MLWE in, RNS_MLWE_KS_Key ksk)
         if (ksk->s[i] == NULL)
             h->digits[i] = (GadgetDigits){NULL, 0};
         else
-            gadget_decompose(&h->digits[i], ksk->s[i], &in->a[i], ksk->log_base);
+            gadget_decompose(&h->digits[i], ksk->s[i], &in->a[i], ksk->log_base, ksk->balanced);
     }
     return h;
 }

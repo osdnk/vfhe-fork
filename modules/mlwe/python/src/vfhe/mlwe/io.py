@@ -66,6 +66,7 @@ def scheme_meta(scheme: MLWE_Scheme, ctx: WriteContext) -> dict[str, Any]:
         "special_rings": [ctx.ref(r) for r in scheme.special_rings],
         "special_primes": scheme.special_primes,
         "rank": scheme.r,
+        "balanced": scheme.balanced,
     }
 
 
@@ -76,6 +77,7 @@ def scheme_arguments(meta: dict[str, Any], ctx: ReadContext) -> dict[str, Any]:
         "special_rings": [ctx.deref(i) for i in meta["special_rings"]],
         "special_primes": meta["special_primes"],
         "module_rank": meta["rank"],
+        "balanced": meta["balanced"],
     }
 
 
@@ -152,6 +154,7 @@ class MGSWSchemeCodec(Codec):
                 "mlwe_scheme": ctx.ref(obj.mlwe_scheme),
                 "ell": obj.ell,
                 "radix_log_base": obj.radix_log_base,
+                "balanced": obj.balanced,
             }
         )
 
@@ -164,7 +167,10 @@ class MGSWSchemeCodec(Codec):
         if found is not None:
             return found
         return MGSW_Scheme(
-            inner, ell=meta["ell"], radix_log_base=meta["radix_log_base"]
+            inner,
+            ell=meta["ell"],
+            radix_log_base=meta["radix_log_base"],
+            balanced=meta["balanced"],
         )
 
 
@@ -317,11 +323,19 @@ class KeySwitchKeyCodec(Codec):
 
     def encode(self, obj: MLWE_Set, ctx: WriteContext, /) -> Encoded:
         if obj.dim > 2:
-            return Encoded({"log_base": obj.log_base}, children=vars(obj)["_children"])
+            return Encoded(
+                {"log_base": obj.log_base, "balanced": obj.balanced},
+                children=vars(obj)["_children"],
+            )
         lengths = [None if comp is None else len(comp) for comp in obj.mlwe]
         samples = [c for comp in obj.mlwe if comp is not None for c in comp]
         batch = SampleBatch(samples, ctx)
-        meta = {**batch.meta, "log_base": obj.log_base, "lengths": lengths}
+        meta = {
+            **batch.meta,
+            "log_base": obj.log_base,
+            "balanced": obj.balanced,
+            "lengths": lengths,
+        }
         return Encoded(meta, batch.size, batch.write)
 
     def decode(self, meta: dict, payload: Payload, children: list, ctx: ReadContext, /):
@@ -332,7 +346,7 @@ class KeySwitchKeyCodec(Codec):
             None if n is None else [next(samples) for _ in range(n)]
             for n in meta["lengths"]
         ]
-        return MLWE_Set(components, meta["log_base"] or None)
+        return MLWE_Set(components, meta["log_base"] or None, meta["balanced"])
 
 
 class MGSWCodec(Codec):

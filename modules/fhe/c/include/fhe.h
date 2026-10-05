@@ -28,14 +28,15 @@ extern "C"
     //
     // `bk` lists the keys step after step, each an MGSW key -- (r + 1) * `ell`
     // samples in the mul domain over the key's ring, with `log_base` the gadget
-    // they were encrypted against. `acc` is canonical on entry and on return,
+    // they were encrypted against and `balanced` the RNS gadget's digit, as in
+    // `gadget_mul_addto_polynomial`. `acc` is canonical on entry and on return,
     // over the ring the products rescale to. `a` holds `n` exponents below 2N.
     //
     // Runs on up to `n_threads` threads (0 for the library limit), all of
     // them working on every step; the result does not depend on the thread
     // count. Reads `bk` and `a` only, so several calls may share a key.
     void cggi16_blind_rotate(RNSc_MLWE acc, const uint64_t *a, uint64_t n, RNS_MLWE *const *bk,
-                             uint64_t unfolding, uint64_t ell, uint64_t log_base,
+                             uint64_t unfolding, uint64_t ell, uint64_t log_base, bool balanced,
                              uint64_t n_threads);
 
     // `count` independent blind rotations against one key, in parallel over
@@ -44,7 +45,7 @@ extern "C"
     // cggi16_blind_rotate.
     void cggi16_blind_rotate_batch(RNSc_MLWE *acc, const uint64_t *a, uint64_t count, uint64_t n,
                                    RNS_MLWE *const *bk, uint64_t unfolding, uint64_t ell,
-                                   uint64_t log_base, uint64_t n_threads);
+                                   uint64_t log_base, bool balanced, uint64_t n_threads);
 
 #ifdef __cplusplus
 }
